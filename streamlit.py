@@ -6,6 +6,7 @@ import math
 import random
 import plotly.graph_objects as go
 import base64
+import datetime
 
 # --- ⚙️ 設定エリア ---
 GITHUB_USER = "Yuto02-10"   # ユーザー名
@@ -16,7 +17,7 @@ GITHUB_TOKEN = None             # Privateなら必須
 
 # --- アプリ設定 ---
 st.set_page_config(page_title="チームデータ分析", layout="wide")
-st.title("⚾️ チームデータ統合システム (指標強化版)")
+st.title("⚾️ チームデータ統合システム (期間選択対応)")
 
 # --- 1. データ取得関数 ---
 @st.cache_data(ttl=3600, show_spinner=False)
@@ -40,7 +41,6 @@ def fetch_github_data(user, repo, folder, token=None):
         for f in csv_files:
             if f.get('download_url'):
                 r = requests.get(f['download_url'], headers=headers)
-                # UTF-8で読み込む
                 temp = pd.read_csv(io.BytesIO(r.content))
                 temp['SourceFile'] = f['name']
                 df_list.append(temp)
@@ -69,46 +69,43 @@ def fetch_github_image(user, repo, filename, token=None):
         except: continue
     return None, "画像が見つかりませんでした"
 
-# --- 3. データ前処理 ---
+# --- 3. データ前処理 (日付対応) ---
 def clean_and_process(df):
     if df.empty: return df
     
-    # カラム名の空白削除
+    # 1. カラム名の空白削除
     df.columns = df.columns.str.strip()
     
-    # 必須カラムの存在保証
-    required = ['PitchLocation', 'PitchResult', 'HitResult', 'KorBB', 'Memo', 'Batter', 'Pitcher']
+    # 2. 必須カラムの存在保証 (Dateを追加)
+    required = ['PitchLocation', 'PitchResult', 'HitResult', 'KorBB', 'Memo', 'Batter', 'Pitcher', 'Date']
     for col in required:
         if col not in df.columns: df[col] = None
     
-    # 文字列データの空白削除
+    # 3. 日付変換 (New!)
+    # エラーがあっても強制的に変換 (変換できないものはNaTになる)
+    df['Date'] = pd.to_datetime(df['Date'], errors='coerce')
+    
+    # 4. 文字列データのクリーニング
     str_cols = df.select_dtypes(include=['object']).columns
     for col in str_cols:
         df[col] = df[col].astype(str).str.strip()
         df.loc[df[col] == 'nan', col] = None
 
-    # 数値変換
+    # 5. 数値変換
     df['PitchLocation'] = pd.to_numeric(df['PitchLocation'], errors='coerce')
     
-    # フラグ立て
-    # ストライクゾーン (1-9)
+    # 6. フラグ立て
     df['is_Zone'] = df['PitchLocation'].isin(range(1, 10))
     
-    # スイング判定 (空振, ファール, インプレー)
-    def check_swing(res):
-        if not isinstance(res, str): return False
-        return any(k in res for k in ['空振', 'ファール', 'インプレー'])
-    
-    # コンタクト判定 (ファール, インプレー)
-    def check_contact(res):
-        if not isinstance(res, str): return False
-        return any(k in res for k in ['ファール', 'インプレー'])
-        
-    df['is_Swing'] = df['PitchResult'].apply(check_swing)
-    df['is_Contact'] = df['PitchResult'].apply(check_contact)
-    df['is_Miss'] = df['PitchResult'].apply(lambda x: '空振' in str(x))
+    def check_result(val, keywords):
+        if not isinstance(val, str): return False
+        return any(k in val for k in keywords)
 
-    # 座標変換 (Memo)
+    df['is_Swing'] = df['PitchResult'].apply(lambda x: check_result(str(x), ['空振', 'ファール', 'インプレー']))
+    df['is_Miss'] = df['PitchResult'].apply(lambda x: check_result(str(x), ['空振']))
+    df['is_Contact'] = df['PitchResult'].apply(lambda x: check_result(str(x), ['ファール', 'インプレー']))
+
+    # 7. 座標変換
     def parse_xy(memo):
         rank_to_dist = {1: 10, 2: 65, 3: 110, 4: 155, 5: 195, 6: 240, 7: 290}
         dir_to_angle = {
@@ -142,7 +139,7 @@ def clean_and_process(df):
     return df
 
 # --- メイン処理 ---
-st.sidebar.header("📁 ステータス")
+st.sidebar.header("📁 データ読み込み")
 
 with st.spinner("データ取得中..."):
     df, err = fetch_github_data(GITHUB_USER, GITHUB_REPO, GITHUB_FOLDER, GITHUB_TOKEN)
@@ -156,19 +153,51 @@ if df.empty:
     else:
         st.stop()
 
-# データクリーニング実行
+# データ処理
 df = clean_and_process(df)
-st.sidebar.success(f"✅ 読み込み: {len(df)}行")
+
+# --- 📅 期間選択機能 (ここを追加) ---
+st.sidebar.markdown("---")
+st.sidebar.header("📅 期間設定")
+
+# 日付データが有効かチェック
+valid_dates = df['Date'].dropna()
+
+if not valid_dates.empty:
+    min_date = valid_dates.min().date()
+    max_date = valid_dates.max().date()
+    
+    # 期間選択スライダー
+    start_date, end_date = st.sidebar.date_input(
+        "分析期間を選択",
+        value=(min_date, max_date),
+        min_value=min_date,
+        max_value=max_date
+    )
+    
+    # データをフィルタリング
+    # Date列がNaT(日付なし)のデータは除外されます
+    mask = (df['Date'].dt.date >= start_date) & (df['Date'].dt.date <= end_date)
+    df_filtered = df.loc[mask]
+    
+    st.sidebar.success(f"期間: {start_date} ～ {end_date}")
+    st.sidebar.info(f"対象データ: {len(df_filtered)} 行 (全 {len(df)} 行中)")
+    
+    # 以降はフィルタリングされたデータ(df_filtered)を使用
+    df = df_filtered
+
+else:
+    st.sidebar.warning("CSVに有効な 'Date' 列が見つかりません。全期間を表示します。")
+
 
 # 画像取得
 bg_image, img_err = fetch_github_image(GITHUB_USER, GITHUB_REPO, GITHUB_IMAGE, GITHUB_TOKEN)
-if bg_image: st.sidebar.success("✅ 画像: OK")
-else: st.sidebar.warning("⚠️ 画像: NG")
 
 # --- 分析画面 ---
 players = sorted(list(set(df['Batter'].dropna().unique()) | set(df['Pitcher'].dropna().unique())))
+
 if not players:
-    st.error("選手名が見つかりません。")
+    st.warning("選択された期間に該当する選手データがありません。期間を広げてください。")
     st.stop()
 
 selected_player = st.selectbox("選手を選択", players)
@@ -178,101 +207,38 @@ tab1, tab2 = st.tabs(["📊 成績表", "🏟 打球方向"])
 
 with tab1:
     if b_df.empty:
-        st.warning("この選手のデータはありません")
+        st.warning(f"{selected_player} 選手の期間内データはありません")
     else:
-        # --- 指標計算ロジック ---
-        
-        # 1. 打席数 (PA): KorBB(四死球・三振) または HitResult(安打・凡打) または PitchResult(死球) がある行
+        # 指標計算
         pa_rows = b_df[(b_df['KorBB'].notna()) | (b_df['HitResult'].notna()) | (b_df['PitchResult'].astype(str).str.contains('死球'))]
         pa = len(pa_rows)
-        
-        # 2. ヒット数
         hits = b_df['HitResult'].isin(['単打', '二塁打', '三塁打', '本塁打']).sum()
-        
-        # 3. 四死球・三振
         bb = b_df['KorBB'].isin(['四球']).sum()
         hbp = b_df['PitchResult'].astype(str).str.contains('死球').sum()
         so = b_df['KorBB'].astype(str).str.contains('三振').sum()
-        
-        # 4. 犠打・犠飛
         sac = b_df['HitResult'].isin(['犠打', '犠飛']).sum()
-        
-        # 5. 打数 (AB) = PA - BB - HBP - SAC
         ab = pa - bb - hbp - sac
         
-        # 6. Advanced Stats用カウント
-        total_swings = b_df['is_Swing'].sum()
-        total_contact = b_df['is_Contact'].sum()
-        total_misses = b_df['is_Miss'].sum()
+        swings = b_df['is_Swing'].sum()
+        contact_cnt = b_df['is_Contact'].sum()
         
-        # Zone系 (ストライクゾーン内の球)
+        misses = b_df['is_Miss'].sum()
+        
+        # Zone系
         z_df = b_df[b_df['is_Zone']]
-        z_total = len(z_df)
         z_swings = z_df['is_Swing'].sum()
         z_contact = z_df['is_Contact'].sum()
         
-        # Out系 (ボールゾーンの球)
+        # Out系
         o_df = b_df[~b_df['is_Zone']]
-        o_total = len(o_df)
         o_swings = o_df['is_Swing'].sum()
         o_contact = o_df['is_Contact'].sum()
-        
-        # パーセント計算関数 (0除算回避)
+
         def pct(n, d): return (n / d * 100) if d > 0 else 0
         
-        # 指標辞書の作成
         stats = {
-            "試合数": b_df['SourceFile'].nunique() if 'SourceFile' in b_df.columns else 1,
-            "打席数": pa,
-            "打率": f"{hits/ab:.3f}" if ab > 0 else "-",
-            "四球率": f"{pct(bb, pa):.1f}%",
-            "三振率": f"{pct(so, pa):.1f}%",
-            "O-Swing%": f"{pct(o_swings, o_total):.1f}%",
-            "Z-Swing%": f"{pct(z_swings, z_total):.1f}%",
-            "SwStr%": f"{pct(total_misses, len(b_df)):.1f}%",
-            "O-Contact%": f"{pct(o_contact, o_swings):.1f}%",
-            "Z-Contact%": f"{pct(z_contact, z_swings):.1f}%",
-            "Contact%": f"{pct(total_contact, total_swings):.1f}%",
-            "K-BB%": f"{pct(so - bb, pa):.1f}%"
-        }
-        
-        st.subheader("打撃成績詳細")
-        st.table(pd.DataFrame([stats]))
-        
-        with st.expander("全打席ログ"):
-            st.dataframe(b_df[['Inning', 'Pitcher', 'PitchResult', 'HitResult', 'Memo']].fillna(''))
+            "試合数": b_df['Date
 
-with tab2:
-    chart_df = b_df.dropna(subset=['打球X', '打球Y'])
-    
-    if chart_df.empty:
-        st.warning("打球データがありません (Memo列が空、または形式違い)")
-    else:
-        fig = go.Figure()
-        fig.add_trace(go.Scatter(
-            x=chart_df['打球X'], y=chart_df['打球Y'],
-            mode='markers',
-            marker=dict(size=12, color='blue', line=dict(width=1, color='white')),
-            text=chart_df['Memo'],
-            name=selected_player
-        ))
-        
-        layout = dict(
-            xaxis=dict(range=[-200, 200], showticklabels=False, fixedrange=True),
-            yaxis=dict(range=[-20, 240], showticklabels=False, fixedrange=True),
-            width=600, height=600,
-            plot_bgcolor="white",
-            margin=dict(l=0, r=0, t=0, b=0)
-        )
-        if bg_image:
-            layout['images'] = [dict(
-                source=bg_image, xref="x", yref="y",
-                x=-292.5, y=296.25, sizex=585, sizey=315,
-                sizing="stretch", layer="below"
-            )]
-            
-        fig.update_layout(**layout)
-        st.plotly_chart(fig, use_container_width=True)
 
 
 
