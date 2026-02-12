@@ -8,7 +8,7 @@ import base64
 import plotly.graph_objects as go
 
 # --- ⚙️ 設定エリア (GitHub情報を入力) ---
-GITHUB_USER = "Yuto-02-10"    # 例: "kanazawa-baseball"
+GITHUB_USER = "Yuto02-10"    # 例: "kanazawa-baseball"
 GITHUB_REPO = "Match--Metrics"   # 例: "game-data-2025"
 GITHUB_FOLDER = "試合データ"       # CSVが入っているフォルダ名
 GITHUB_IMAGE = "打球分析.png"     # 背景画像のファイル名（ルートにある場合）
@@ -204,4 +204,5 @@ with tab2:
             
         fig.update_layout(**layout_dict)
         st.plotly_chart(fig)
+
 
