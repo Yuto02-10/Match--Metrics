@@ -5,6 +5,7 @@ import io
 import math
 import random
 import plotly.graph_objects as go
+import base64
 
 # --- ⚙️ 設定エリア ---
 GITHUB_USER = "Yuto02-10"   # ユーザー名
@@ -18,7 +19,7 @@ GITHUB_TOKEN = None
 st.set_page_config(page_title="チームデータ分析", layout="wide")
 st.title("⚾️ チームデータ統合システム")
 
-# --- 関数: Githubデータ取得 (デバッグ機能強化版) ---
+# --- 関数1: Githubデータ取得 (CSV) ---
 @st.cache_data(ttl=3600, show_spinner=False)
 def fetch_github_data(user, repo, folder, token=None):
     base_url = f"https://api.github.com/repos/{user}/{repo}/contents"
@@ -29,7 +30,6 @@ def fetch_github_data(user, repo, folder, token=None):
         headers["Authorization"] = f"token {token}"
     
     try:
-        # 1. ファイル一覧取得
         response = requests.get(base_url, headers=headers)
         if response.status_code != 200:
             return pd.DataFrame(), f"Githubアクセスエラー (Status: {response.status_code})"
@@ -40,11 +40,10 @@ def fetch_github_data(user, repo, folder, token=None):
         if not csv_files:
             return pd.DataFrame(), "CSVファイルが見つかりません"
 
-        # 2. CSV読み込み
         df_list = []
         for f in csv_files:
             if f.get('download_url'):
-                r = requests.get(f['download_url'], headers=headers) # headersを追加
+                r = requests.get(f['download_url'], headers=headers)
                 temp = pd.read_csv(io.BytesIO(r.content))
                 temp['SourceFile'] = f['name']
                 df_list.append(temp)
@@ -57,31 +56,50 @@ def fetch_github_data(user, repo, folder, token=None):
     except Exception as e:
         return pd.DataFrame(), f"プログラムエラー: {e}"
 
-# --- 関数: 指標計算のための前処理 ---
+# --- 関数2: 画像データ取得 (ここを追加しました) ---
+@st.cache_data(ttl=3600, show_spinner=False)
+def fetch_github_image(user, repo, filename, token=None):
+    # API経由ではなく、Raw URLから直接取得する方式（より確実）
+    # mainブランチとmasterブランチの両方を試す
+    branches = ["main", "master"]
+    
+    headers = {}
+    if token:
+        headers["Authorization"] = f"token {token}"
+
+    for branch in branches:
+        raw_url = f"https://raw.githubusercontent.com/{user}/{repo}/{branch}/{filename}"
+        try:
+            r = requests.get(raw_url, headers=headers)
+            if r.status_code == 200:
+                # 成功したらBase64エンコードして返す
+                b64_img = base64.b64encode(r.content).decode()
+                return f"data:image/png;base64,{b64_img}", None
+        except:
+            continue
+            
+    return None, "画像が見つかりませんでした (main/master両方試行)"
+
+# --- 関数3: 前処理 ---
 def preprocess_data(df):
     if df.empty: return df
     
-    # 必須カラムの確認と作成
-    required_cols = ['PitchLocation', 'PitchResult', 'HitResult', 'KorBB']
+    required_cols = ['PitchLocation', 'PitchResult', 'HitResult', 'KorBB', 'Memo']
     for col in required_cols:
         if col not in df.columns:
-            df[col] = None # ない場合は空の列を作る
+            df[col] = None
             
-    # ストライクゾーン定義 (1-9)
-    # PitchLocationが数値型でない場合に備えて変換
     df['PitchLocation'] = pd.to_numeric(df['PitchLocation'], errors='coerce')
     df['is_Zone'] = df['PitchLocation'].isin(range(1, 10))
     
-    # スイング・コンタクト判定
     df['is_Swing'] = df['PitchResult'].isin(['空振', 'ファール', 'インプレー'])
     df['is_Miss'] = df['PitchResult'] == '空振'
     df['is_Contact'] = df['PitchResult'].isin(['ファール', 'インプレー'])
     
     return df
 
-# --- 関数: Memo座標変換 ---
+# --- 関数4: 座標変換 ---
 def parse_memo_to_xy(memo):
-    # (省略せずに前回のロジックを維持)
     rank_to_dist = {1: 10, 2: 65, 3: 110, 4: 155, 5: 195, 6: 240, 7: 290}
     dir_to_angle = {
         'B': -46.5, 'C': -42.2, 'D': -38, 'E': -34.2, 'F': -30, 'G': -26,
@@ -104,31 +122,32 @@ def parse_memo_to_xy(memo):
 
 
 # --- メイン処理 ---
-with st.spinner("データを読み込んでいます..."):
-    # データ取得
+st.sidebar.header("📁 読み込みステータス")
+
+# 1. CSV読み込み
+with st.spinner("CSVデータを取得中..."):
     df, err_msg = fetch_github_data(GITHUB_USER, GITHUB_REPO, GITHUB_FOLDER, GITHUB_TOKEN)
 
 if not df.empty:
-    st.sidebar.success(f"✅ 読み込み成功: {len(df)} 行")
+    st.sidebar.success(f"✅ CSV: {len(df)} 行")
     df = preprocess_data(df)
-    
-    # 座標変換
     if 'Memo' in df.columns:
         df[['打球X', '打球Y']] = df['Memo'].apply(parse_memo_to_xy)
     else:
         df['打球X'], df['打球Y'] = None, None
-        
 else:
-    st.error(f"⚠️ データ読み込み失敗: {err_msg}")
-    st.info("サイドバーから手動でCSVをアップロードしてください。")
-    uploaded = st.sidebar.file_uploader("手動アップロード", accept_multiple_files=True)
-    if uploaded:
-        df = pd.concat([pd.read_csv(f).assign(SourceFile=f.name) for f in uploaded], ignore_index=True)
-        df = preprocess_data(df)
-        if 'Memo' in df.columns:
-            df[['打球X', '打球Y']] = df['Memo'].apply(parse_memo_to_xy)
-    else:
-        st.stop()
+    st.sidebar.error(f"❌ CSV失敗: {err_msg}")
+    st.stop()
+
+# 2. 画像読み込み (ここを追加しました)
+with st.spinner("画像データを取得中..."):
+    bg_image, img_err = fetch_github_image(GITHUB_USER, GITHUB_REPO, GITHUB_IMAGE, GITHUB_TOKEN)
+
+if bg_image:
+    st.sidebar.success("✅ 画像: 取得成功")
+else:
+    st.sidebar.warning(f"⚠️ 画像失敗: {img_err}")
+
 
 # --- 分析画面 ---
 st.sidebar.markdown("---")
@@ -137,85 +156,18 @@ selected_player = st.sidebar.selectbox("選手を選択", players)
 
 tab1, tab2 = st.tabs(["📊 詳細成績", "🏟 打球方向"])
 
-# --- タブ1: 指標表の表示 ---
 with tab1:
     b_df = df[df['Batter'] == selected_player]
-    
     if b_df.empty:
-        st.warning("この選手の打撃データはありません。")
+        st.warning("データなし")
     else:
         # 指標計算
         pa_rows = b_df[(b_df['KorBB'].notna()) | (b_df['HitResult'].notna())]
         pa = len(pa_rows)
         hits = b_df['HitResult'].isin(['単打', '二塁打', '三塁打', '本塁打']).sum()
         bb = b_df['KorBB'].isin(['四球']).sum()
-        hbp = b_df['PitchResult'].isin(['死球']).sum()
-        sac = b_df['HitResult'].isin(['犠打', '犠飛']).sum()
-        ab = pa - bb - hbp - sac
-        so = b_df['KorBB'].astype(str).str.contains('三振').sum()
+        so = b_df['KorBB'].astype(str).str.contains('三振').sum
 
-        # Advanced Stats
-        swings = b_df['is_Swing'].sum()
-        misses = b_df['is_Miss'].sum()
-        
-        # Zone系
-        z_df = b_df[b_df['is_Zone']]
-        z_swings = z_df['is_Swing'].sum()
-        z_contacts = z_df['is_Contact'].sum()
-        
-        # Out系
-        o_df = b_df[~b_df['is_Zone']]
-        o_swings = o_df['is_Swing'].sum()
-        o_contacts = o_df['is_Contact'].sum()
-
-        def pct(n, d): return (n/d*100) if d>0 else 0
-        
-        # 表示用辞書作成
-        stats = {
-            "試合数": b_df['SourceFile'].nunique(),
-            "打席数": pa,
-            "打率": f"{hits/ab:.3f}" if ab>0 else ".000",
-            "四球率": f"{pct(bb, pa):.1f}%",
-            "三振率": f"{pct(so, pa):.1f}%",
-            "O-Swing%": f"{pct(o_swings, len(o_df)):.1f}%",
-            "Z-Swing%": f"{pct(z_swings, len(z_df)):.1f}%",
-            "SwStr%": f"{pct(misses, len(b_df)):.1f}%",
-            "O-Contact%": f"{pct(o_contacts, o_swings):.1f}%",
-            "Z-Contact%": f"{pct(z_contacts, z_swings):.1f}%",
-            "Contact%": f"{pct(b_df['is_Contact'].sum(), swings):.1f}%",
-            "K-BB%": f"{pct(so-bb, pa):.1f}%"
-        }
-        
-        st.subheader("打撃成績サマリー")
-        # データフレームにして表示（ここが表示されていなかったはず）
-        st.dataframe(pd.DataFrame([stats]), use_container_width=True)
-        
-        with st.expander("全打席ログを確認"):
-            st.dataframe(b_df)
-
-# --- タブ2: 打球方向 ---
-with tab2:
-    chart_df = df[df['Batter'] == selected_player].copy()
-    chart_df = chart_df.dropna(subset=['打球X', '打球Y'])
-    
-    if chart_df.empty:
-        st.info("打球座標データがありません。")
-    else:
-        fig = go.Figure()
-        fig.add_trace(go.Scatter(
-            x=chart_df['打球X'], y=chart_df['打球Y'],
-            mode='markers',
-            marker=dict(size=10, color='blue'),
-            text=chart_df['Memo'],
-            name=selected_player
-        ))
-        fig.update_layout(
-            xaxis=dict(range=[-200, 200], showticklabels=False),
-            yaxis=dict(range=[-20, 240], showticklabels=False),
-            width=600, height=600,
-            plot_bgcolor="white"
-        )
-        st.plotly_chart(fig)
 
 
 
