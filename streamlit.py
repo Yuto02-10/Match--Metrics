@@ -8,15 +8,15 @@ import plotly.graph_objects as go
 import base64
 
 # --- ⚙️ 設定エリア ---
-GITHUB_USER = "Yuto02-10"   # ユーザー名
-GITHUB_REPO = "Match--Metrics"  # リポジトリ名
+GITHUB_USER = "your_username"   # ユーザー名
+GITHUB_REPO = "your_repo_name"  # リポジトリ名
 GITHUB_FOLDER = "試合データ"      # フォルダ名
 GITHUB_IMAGE = "打球分析.png"    # 画像ファイル名
 GITHUB_TOKEN = None             # Privateなら必須
 
 # --- アプリ設定 ---
 st.set_page_config(page_title="チームデータ分析", layout="wide")
-st.title("⚾️ チームデータ統合システム (強力クリーニング版)")
+st.title("⚾️ チームデータ統合システム (修正版)")
 
 # --- 1. データ取得関数 ---
 @st.cache_data(ttl=3600, show_spinner=False)
@@ -32,6 +32,9 @@ def fetch_github_data(user, repo, folder, token=None):
             return pd.DataFrame(), f"Githubアクセスエラー: {response.status_code}"
         
         files = response.json()
+        if not isinstance(files, list):
+            return pd.DataFrame(), "ファイル一覧の取得に失敗しました"
+
         csv_files = [f for f in files if isinstance(f, dict) and f.get('name', '').endswith('.csv')]
         
         if not csv_files: return pd.DataFrame(), "CSVなし"
@@ -73,7 +76,7 @@ def fetch_github_image(user, repo, filename, token=None):
 def clean_and_process(df):
     if df.empty: return df
     
-    # 1. カラム名の空白削除 (' PitchResult ' -> 'PitchResult')
+    # 1. カラム名の空白削除
     df.columns = df.columns.str.strip()
     
     # 2. 必須カラムの存在保証
@@ -81,22 +84,18 @@ def clean_and_process(df):
     for col in required:
         if col not in df.columns: df[col] = None
     
-    # 3. 文字列データの空白削除 & 全角統一 (' インプレー ' -> 'インプレー')
-    # これが原因でマッチングしないことが多い
+    # 3. 文字列データの空白削除
     str_cols = df.select_dtypes(include=['object']).columns
     for col in str_cols:
         df[col] = df[col].astype(str).str.strip()
-        # 'nan' という文字列になってしまったものをNoneに戻す
         df.loc[df[col] == 'nan', col] = None
 
     # 4. 数値変換
     df['PitchLocation'] = pd.to_numeric(df['PitchLocation'], errors='coerce')
     
     # 5. フラグ立て
-    # 部分一致も許容するように修正 (例: '空振り' vs '空振')
     df['is_Zone'] = df['PitchLocation'].isin(range(1, 10))
     
-    # 結果判定ロジックの強化
     def check_result(val, keywords):
         if not isinstance(val, str): return False
         return any(k in val for k in keywords)
@@ -105,7 +104,7 @@ def clean_and_process(df):
     df['is_Miss'] = df['PitchResult'].apply(lambda x: check_result(str(x), ['空振']))
     df['is_Contact'] = df['PitchResult'].apply(lambda x: check_result(str(x), ['ファール', 'インプレー']))
 
-    # 6. 座標変換 (Memo) - 空白除去対応版
+    # 6. 座標変換 (Memo)
     def parse_xy(memo):
         rank_to_dist = {1: 10, 2: 65, 3: 110, 4: 155, 5: 195, 6: 240, 7: 290}
         dir_to_angle = {
@@ -119,10 +118,8 @@ def clean_and_process(df):
             return pd.Series([None, None])
             
         try:
-            # " H 3 " -> "H3" -> d="H", rank=3
             memo = memo.replace(" ", "").upper()
             d = memo[0]
-            # 数字部分を取り出す (2桁の場合にも対応)
             rank_str = "".join([c for c in memo[1:] if c.isdigit()])
             if not rank_str: return pd.Series([None, None])
             
@@ -130,7 +127,6 @@ def clean_and_process(df):
             angle = dir_to_angle.get(d)
             
             if angle is not None and rank in rank_to_dist:
-                # 散らし処理
                 angle += random.uniform(-0.05, 0.05)
                 dist = rank_to_dist[rank] * random.uniform(0.9, 1.1)
                 rad = math.radians(angle)
@@ -163,22 +159,12 @@ st.sidebar.success(f"✅ 読み込み: {len(df)}行")
 # 画像取得
 bg_image, img_err = fetch_github_image(GITHUB_USER, GITHUB_REPO, GITHUB_IMAGE, GITHUB_TOKEN)
 if bg_image: st.sidebar.success("✅ 画像: OK")
-else: st.sidebar.warning("⚠️ 画像: NG (白背景になります)")
-
-# --- 診断エリア (重要) ---
-with st.expander("🔍 データ診断 (表が出ない場合はここを確認)", expanded=True):
-    st.write("データの一部:")
-    st.dataframe(df[['Batter', 'PitchResult', 'Memo', '打球X', '打球Y']].head(3))
-    
-    unique_results = df['PitchResult'].unique()
-    st.write(f"**PitchResultに含まれる値**: {unique_results}")
-    if '空振' not in str(unique_results) and 'インプレー' not in str(unique_results):
-        st.error("⚠️ '空振' や 'インプレー' が見つかりません。データの用語が違う可能性があります。")
+else: st.sidebar.warning("⚠️ 画像: NG")
 
 # --- 分析画面 ---
 players = sorted(list(set(df['Batter'].dropna().unique()) | set(df['Pitcher'].dropna().unique())))
 if not players:
-    st.error("選手名が見つかりません。'Batter'列 または 'Pitcher'列 がCSVに存在するか確認してください。")
+    st.error("選手名が見つかりません。")
     st.stop()
 
 selected_player = st.selectbox("選手を選択", players)
@@ -190,7 +176,6 @@ with tab1:
     if b_df.empty:
         st.warning("この選手のデータはありません")
     else:
-        # 指標計算
         pa_rows = b_df[(b_df['KorBB'].notna()) | (b_df['HitResult'].notna())]
         pa = len(pa_rows)
         hits = b_df['HitResult'].isin(['単打', '二塁打', '三塁打', '本塁打']).sum()
@@ -212,14 +197,16 @@ with tab1:
             "コンタクト率": f"{pct(contact_cnt, swings):.1f}%"
         }
         st.subheader("打撃成績")
-        st.table(pd.DataFrame([stats])) # st.dataframeより確実に表示されるst.tableを使用
+        st.table(pd.DataFrame([stats]))
+        
+        with st.expander("データログ"):
+            st.dataframe(b_df[['Inning', 'Pitcher', 'PitchResult', 'HitResult', 'Memo']].fillna(''))
 
 with tab2:
     chart_df = b_df.dropna(subset=['打球X', '打球Y'])
     
     if chart_df.empty:
-        st.warning("打球データがありません (Memo列が空、または 'H3' のような形式ではありません)")
-        st.write("Memo列の中身:", b_df['Memo'].unique())
+        st.warning("打球データがありません (Memo列が空、または形式違い)")
     else:
         fig = go.Figure()
         fig.add_trace(go.Scatter(
@@ -244,7 +231,8 @@ with tab2:
                 sizing="stretch", layer="below"
             )]
             
-        fig.
+        fig.update_layout(**layout)
+        st.plotly_chart(fig, use_container_width=True)
 
 
 
