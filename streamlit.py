@@ -8,8 +8,8 @@ import plotly.graph_objects as go
 import base64
 
 # --- ⚙️ 設定エリア ---
-GITHUB_USER = "your_username"   # ユーザー名
-GITHUB_REPO = "your_repo_name"  # リポジトリ名
+GITHUB_USER = "Yuto02-10"   # ユーザー名
+GITHUB_REPO = "Match--Metrics"  # リポジトリ名
 GITHUB_FOLDER = "試合データ"      # フォルダ名
 GITHUB_IMAGE = "打球分析.png"    # 画像ファイル名
 GITHUB_TOKEN = None             # Privateなら必須
@@ -233,6 +233,7 @@ with tab2:
             
         fig.update_layout(**layout)
         st.plotly_chart(fig, use_container_width=True)
+
 
 
 
