@@ -237,7 +237,57 @@ with tab1:
         def pct(n, d): return (n / d * 100) if d > 0 else 0
         
         stats = {
-            "試合数": b_df['Date
+            "試合数": b_df['Date'].nunique() if 'Date' in b_df.columns else 1,
+            "打席数": pa,
+            "打率": f"{hits/ab:.3f}" if ab > 0 else "-",
+            "四球率": f"{pct(bb, pa):.1f}%",
+            "三振率": f"{pct(so, pa):.1f}%",
+            "O-Swing%": f"{pct(o_swings, len(o_df)):.1f}%",
+            "Z-Swing%": f"{pct(z_swings, len(z_df)):.1f}%",
+            "SwStr%": f"{pct(misses, len(b_df)):.1f}%",
+            "O-Contact%": f"{pct(o_contact, o_swings):.1f}%",
+            "Z-Contact%": f"{pct(z_contact, z_swings):.1f}%",
+            "Contact%": f"{pct(contact_cnt, swings):.1f}%",
+            "K-BB%": f"{pct(so - bb, pa):.1f}%"
+        }
+        st.subheader("打撃成績詳細")
+        st.table(pd.DataFrame([stats]))
+        
+        with st.expander("データログ"):
+            cols = ['Date', 'Inning', 'Pitcher', 'PitchResult', 'HitResult', 'Memo']
+            st.dataframe(b_df[[c for c in cols if c in df.columns]].fillna('').sort_values('Date'))
+
+with tab2:
+    chart_df = b_df.dropna(subset=['打球X', '打球Y'])
+    
+    if chart_df.empty:
+        st.warning("この期間の打球データがありません")
+    else:
+        fig = go.Figure()
+        fig.add_trace(go.Scatter(
+            x=chart_df['打球X'], y=chart_df['打球Y'],
+            mode='markers',
+            marker=dict(size=12, color='blue', line=dict(width=1, color='white')),
+            text=chart_df['Memo'],
+            name=selected_player
+        ))
+        
+        layout = dict(
+            xaxis=dict(range=[-200, 200], showticklabels=False, fixedrange=True),
+            yaxis=dict(range=[-20, 240], showticklabels=False, fixedrange=True),
+            width=600, height=600,
+            plot_bgcolor="white",
+            margin=dict(l=0, r=0, t=0, b=0)
+        )
+        if bg_image:
+            layout['images'] = [dict(
+                source=bg_image, xref="x", yref="y",
+                x=-292.5, y=296.25, sizex=585, sizey=315,
+                sizing="stretch", layer="below"
+            )]
+            
+        fig.update_layout(**layout)
+        st.plotly_chart(fig, use_container_width=True)
 
 
 
