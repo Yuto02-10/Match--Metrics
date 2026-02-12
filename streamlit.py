@@ -7,7 +7,7 @@ import random
 import plotly.graph_objects as go
 
 # --- ⚙️ 設定エリア ---
-GITHUB_USER = "Yuto-0210"   # ユーザー名
+GITHUB_USER = "Yuto02-10"   # ユーザー名
 GITHUB_REPO = "Match--Metrics"  # リポジトリ名
 GITHUB_FOLDER = "試合データ"      # フォルダ名
 GITHUB_IMAGE = "打球分析.png"    # 画像ファイル名
@@ -216,6 +216,7 @@ with tab2:
             plot_bgcolor="white"
         )
         st.plotly_chart(fig)
+
 
 
 
