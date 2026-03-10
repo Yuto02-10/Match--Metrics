@@ -9,15 +9,15 @@ import base64
 import datetime
 
 # --- ⚙️ 設定エリア ---
-GITHUB_USER = "Yuto02-10"   # ユーザー名
-GITHUB_REPO = "Match--Metrics"  # リポジトリ名
+GITHUB_USER = "your_username"   # ユーザー名
+GITHUB_REPO = "your_repo_name"  # リポジトリ名
 GITHUB_FOLDER = "試合データ"      # フォルダ名
 GITHUB_IMAGE = "打球分析.png"    # 画像ファイル名
 GITHUB_TOKEN = None             # Privateなら必須
 
 # --- アプリ設定 ---
 st.set_page_config(page_title="チームデータ分析", layout="wide")
-st.title("⚾️ チームデータ統合システム (期間選択対応)")
+st.title("⚾️ チームデータ統合システム (指標アップデート版)")
 
 # --- 1. データ取得関数 ---
 @st.cache_data(ttl=3600, show_spinner=False)
@@ -69,7 +69,7 @@ def fetch_github_image(user, repo, filename, token=None):
         except: continue
     return None, "画像が見つかりませんでした"
 
-# --- 3. データ前処理 (日付対応) ---
+# --- 3. データ前処理 ---
 def clean_and_process(df):
     if df.empty: return df
     
@@ -81,8 +81,7 @@ def clean_and_process(df):
     for col in required:
         if col not in df.columns: df[col] = None
     
-    # 3. 日付変換 (New!)
-    # エラーがあっても強制的に変換 (変換できないものはNaTになる)
+    # 3. 日付変換
     df['Date'] = pd.to_datetime(df['Date'], errors='coerce')
     
     # 4. 文字列データのクリーニング
@@ -156,18 +155,16 @@ if df.empty:
 # データ処理
 df = clean_and_process(df)
 
-# --- 📅 期間選択機能 (ここを追加) ---
+# --- 📅 期間選択機能 ---
 st.sidebar.markdown("---")
 st.sidebar.header("📅 期間設定")
 
-# 日付データが有効かチェック
 valid_dates = df['Date'].dropna()
 
 if not valid_dates.empty:
     min_date = valid_dates.min().date()
     max_date = valid_dates.max().date()
     
-    # 期間選択スライダー
     start_date, end_date = st.sidebar.date_input(
         "分析期間を選択",
         value=(min_date, max_date),
@@ -175,20 +172,15 @@ if not valid_dates.empty:
         max_value=max_date
     )
     
-    # データをフィルタリング
-    # Date列がNaT(日付なし)のデータは除外されます
     mask = (df['Date'].dt.date >= start_date) & (df['Date'].dt.date <= end_date)
     df_filtered = df.loc[mask]
     
     st.sidebar.success(f"期間: {start_date} ～ {end_date}")
-    st.sidebar.info(f"対象データ: {len(df_filtered)} 行 (全 {len(df)} 行中)")
+    st.sidebar.info(f"対象データ: {len(df_filtered)} 行")
     
-    # 以降はフィルタリングされたデータ(df_filtered)を使用
     df = df_filtered
-
 else:
-    st.sidebar.warning("CSVに有効な 'Date' 列が見つかりません。全期間を表示します。")
-
+    st.sidebar.warning("CSVに有効な 'Date' 列が見つかりません。")
 
 # 画像取得
 bg_image, img_err = fetch_github_image(GITHUB_USER, GITHUB_REPO, GITHUB_IMAGE, GITHUB_TOKEN)
@@ -197,7 +189,7 @@ bg_image, img_err = fetch_github_image(GITHUB_USER, GITHUB_REPO, GITHUB_IMAGE, G
 players = sorted(list(set(df['Batter'].dropna().unique()) | set(df['Pitcher'].dropna().unique())))
 
 if not players:
-    st.warning("選択された期間に該当する選手データがありません。期間を広げてください。")
+    st.warning("選択された期間に該当する選手データがありません。")
     st.stop()
 
 selected_player = st.selectbox("選手を選択", players)
@@ -219,37 +211,44 @@ with tab1:
         sac = b_df['HitResult'].isin(['犠打', '犠飛']).sum()
         ab = pa - bb - hbp - sac
         
+        # 全投球数
+        total_pitches = len(b_df)
         swings = b_df['is_Swing'].sum()
         contact_cnt = b_df['is_Contact'].sum()
-        
         misses = b_df['is_Miss'].sum()
         
         # Zone系
         z_df = b_df[b_df['is_Zone']]
+        z_total = len(z_df)
         z_swings = z_df['is_Swing'].sum()
         z_contact = z_df['is_Contact'].sum()
+        z_takes = z_total - z_swings # ストライク見逃し数
         
         # Out系
         o_df = b_df[~b_df['is_Zone']]
+        o_total = len(o_df)
         o_swings = o_df['is_Swing'].sum()
         o_contact = o_df['is_Contact'].sum()
 
         def pct(n, d): return (n / d * 100) if d > 0 else 0
         
+        # 📊 表示する指標の変更
         stats = {
             "試合数": b_df['Date'].nunique() if 'Date' in b_df.columns else 1,
             "打席数": pa,
             "打率": f"{hits/ab:.3f}" if ab > 0 else "-",
             "四球率": f"{pct(bb, pa):.1f}%",
             "三振率": f"{pct(so, pa):.1f}%",
-            "O-Swing%": f"{pct(o_swings, len(o_df)):.1f}%",
-            "Z-Swing%": f"{pct(z_swings, len(z_df)):.1f}%",
-            "SwStr%": f"{pct(misses, len(b_df)):.1f}%",
+            "スイング率": f"{pct(swings, total_pitches):.1f}%",            # ← 追加
+            "ストライク見逃し率": f"{pct(z_takes, z_total):.1f}%",       # ← 追加
+            "O-Swing%": f"{pct(o_swings, o_total):.1f}%",
+            "Z-Swing%": f"{pct(z_swings, z_total):.1f}%",
+            "SwStr%": f"{pct(misses, total_pitches):.1f}%",
             "O-Contact%": f"{pct(o_contact, o_swings):.1f}%",
             "Z-Contact%": f"{pct(z_contact, z_swings):.1f}%",
-            "Contact%": f"{pct(contact_cnt, swings):.1f}%",
-            "K-BB%": f"{pct(so - bb, pa):.1f}%"
+            "Contact%": f"{pct(contact_cnt, swings):.1f}%"
         }
+        
         st.subheader("打撃成績詳細")
         st.table(pd.DataFrame([stats]))
         
@@ -288,6 +287,7 @@ with tab2:
             
         fig.update_layout(**layout)
         st.plotly_chart(fig, use_container_width=True)
+
 
 
 
