@@ -17,7 +17,7 @@ GITHUB_TOKEN = None             # Privateなら必須
 
 # --- アプリ設定 ---
 st.set_page_config(page_title="チームデータ分析", layout="wide")
-st.title("⚾️ チームデータ統合システム (コース拡張版)")
+st.title("⚾️ チームデータ統合システム (コース四隅対応版)")
 
 # --- 1. データ取得関数 ---
 @st.cache_data(ttl=3600, show_spinner=False)
@@ -218,7 +218,7 @@ with tab1:
         st.table(pd.DataFrame([stats]))
         
         # ==========================================
-        # 📊 追加グラフセクション
+        # 📊 グラフセクション
         # ==========================================
         st.markdown("---")
         st.subheader("📈 アプローチ分析")
@@ -247,29 +247,28 @@ with tab1:
             fig_count.update_layout(title="カウント別 スイング率・ストライク見逃し率", barmode='group', xaxis_title="ボール - ストライク", yaxis_title="割合(%)")
             st.plotly_chart(fig_count, use_container_width=True)
 
-
-        # コース別グラフの配置定義 (1〜9がストライクゾーン、11〜14がボールゾーン)
-        # 座標系: x=1,2,3 y=1,2,3 がストライクゾーン
+        # ------------------------------------------
+        # 📌 ここが変更ポイント：コース四隅対応
+        # ------------------------------------------
         zone_map = {
+            # ストライクゾーン (3x3)
             1: (1, 3), 2: (2, 3), 3: (3, 3),
             4: (1, 2), 5: (2, 2), 6: (3, 2),
             7: (1, 1), 8: (2, 1), 9: (3, 1),
-            11: (2, 4.2),  # 高め
-            13: (2, -0.2), # 低め
-            12: (-0.2, 2), # 12番コース (左側)
-            14: (4.2, 2)   # 14番コース (右側)
+            # ボールゾーン (四隅)
+            11: (0.2, 4.2), # 左上
+            12: (3.8, 4.2), # 右上
+            13: (0.2, -0.2), # 左下
+            14: (3.8, -0.2)  # 右下
         }
         
-        zone_names = {11: "高め", 13: "低め", 12: "コース12", 14: "コース14"}
+        zone_names = {11: "左上", 12: "右上", 13: "左下", 14: "右下"}
 
         # ストライクゾーンを描くための枠線 (3x3グリッド)
         board_shapes = [
-            # 外枠
             dict(type="rect", x0=0.5, y0=0.5, x1=3.5, y1=3.5, line=dict(color="black", width=2)),
-            # 縦線
             dict(type="line", x0=1.5, y0=0.5, x1=1.5, y1=3.5, line=dict(color="gray", width=1, dash="dash")),
             dict(type="line", x0=2.5, y0=0.5, x1=2.5, y1=3.5, line=dict(color="gray", width=1, dash="dash")),
-            # 横線
             dict(type="line", x0=0.5, y0=1.5, x1=3.5, y1=1.5, line=dict(color="gray", width=1, dash="dash")),
             dict(type="line", x0=0.5, y0=2.5, x1=3.5, y1=2.5, line=dict(color="gray", width=1, dash="dash")),
         ]
@@ -284,7 +283,6 @@ with tab1:
             
             for z in [1,2,3,4,5,6,7,8,9, 11,12,13,14]:
                 z_data = b_df[b_df['PitchLocation'] == z]
-                # ボールゾーンのみラベル名を追加
                 prefix = f"<b>{zone_names[z]}</b><br>" if z in zone_names else ""
                 
                 if not z_data.empty:
@@ -379,6 +377,7 @@ with tab2:
             
         fig.update_layout(**layout)
         st.plotly_chart(fig, use_container_width=True)
+
 
 
 
