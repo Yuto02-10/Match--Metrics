@@ -5,6 +5,7 @@ import io
 import math
 import random
 import plotly.graph_objects as go
+import plotly.express as px
 import base64
 import datetime
 
@@ -17,7 +18,7 @@ GITHUB_TOKEN = None             # Privateなら必須
 
 # --- アプリ設定 ---
 st.set_page_config(page_title="チームデータ分析", layout="wide")
-st.title("⚾️ チームデータ統合システム (指標アップデート版)")
+st.title("⚾️ チームデータ統合システム (詳細グラフ追加版)")
 
 # --- 1. データ取得関数 ---
 @st.cache_data(ttl=3600, show_spinner=False)
@@ -48,7 +49,6 @@ def fetch_github_data(user, repo, folder, token=None):
         if df_list:
             return pd.concat(df_list, ignore_index=True), None
         return pd.DataFrame(), "結合失敗"
-
     except Exception as e:
         return pd.DataFrame(), f"エラー: {e}"
 
@@ -73,27 +73,19 @@ def fetch_github_image(user, repo, filename, token=None):
 def clean_and_process(df):
     if df.empty: return df
     
-    # 1. カラム名の空白削除
     df.columns = df.columns.str.strip()
-    
-    # 2. 必須カラムの存在保証 (Dateを追加)
-    required = ['PitchLocation', 'PitchResult', 'HitResult', 'KorBB', 'Memo', 'Batter', 'Pitcher', 'Date']
+    required = ['PitchLocation', 'PitchResult', 'HitResult', 'HitType', 'KorBB', 'Memo', 'Batter', 'Pitcher', 'Date', 'Ball', 'Strike']
     for col in required:
         if col not in df.columns: df[col] = None
     
-    # 3. 日付変換
     df['Date'] = pd.to_datetime(df['Date'], errors='coerce')
     
-    # 4. 文字列データのクリーニング
     str_cols = df.select_dtypes(include=['object']).columns
     for col in str_cols:
         df[col] = df[col].astype(str).str.strip()
         df.loc[df[col] == 'nan', col] = None
 
-    # 5. 数値変換
     df['PitchLocation'] = pd.to_numeric(df['PitchLocation'], errors='coerce')
-    
-    # 6. フラグ立て
     df['is_Zone'] = df['PitchLocation'].isin(range(1, 10))
     
     def check_result(val, keywords):
@@ -104,7 +96,6 @@ def clean_and_process(df):
     df['is_Miss'] = df['PitchResult'].apply(lambda x: check_result(str(x), ['空振']))
     df['is_Contact'] = df['PitchResult'].apply(lambda x: check_result(str(x), ['ファール', 'インプレー']))
 
-    # 7. 座標変換
     def parse_xy(memo):
         rank_to_dist = {1: 10, 2: 65, 3: 110, 4: 155, 5: 195, 6: 240, 7: 290}
         dir_to_angle = {
@@ -113,10 +104,7 @@ def clean_and_process(df):
             'N': 1.5, 'O': 5.5, 'P': 9.5, 'Q': 13.5, 'R': 17.5, 'S': 21.5,
             'T': 25.5, 'U': 29.5, 'V': 33.5, 'W': 37.5, 'X': 41.5, 'Y': 45.5
         }
-        
-        if not isinstance(memo, str) or len(memo) < 2:
-            return pd.Series([None, None])
-            
+        if not isinstance(memo, str) or len(memo) < 2: return pd.Series([None, None])
         try:
             memo = memo.replace(" ", "").upper()
             d = memo[0]
@@ -125,7 +113,6 @@ def clean_and_process(df):
             
             rank = int(rank_str)
             angle = dir_to_angle.get(d)
-            
             if angle is not None and rank in rank_to_dist:
                 angle += random.uniform(-0.05, 0.05)
                 dist = rank_to_dist[rank] * random.uniform(0.9, 1.1)
@@ -152,42 +139,25 @@ if df.empty:
     else:
         st.stop()
 
-# データ処理
 df = clean_and_process(df)
 
 # --- 📅 期間選択機能 ---
 st.sidebar.markdown("---")
 st.sidebar.header("📅 期間設定")
-
 valid_dates = df['Date'].dropna()
 
 if not valid_dates.empty:
     min_date = valid_dates.min().date()
     max_date = valid_dates.max().date()
-    
-    start_date, end_date = st.sidebar.date_input(
-        "分析期間を選択",
-        value=(min_date, max_date),
-        min_value=min_date,
-        max_value=max_date
-    )
-    
+    start_date, end_date = st.sidebar.date_input("分析期間を選択", value=(min_date, max_date), min_value=min_date, max_value=max_date)
     mask = (df['Date'].dt.date >= start_date) & (df['Date'].dt.date <= end_date)
-    df_filtered = df.loc[mask]
-    
+    df = df.loc[mask]
     st.sidebar.success(f"期間: {start_date} ～ {end_date}")
-    st.sidebar.info(f"対象データ: {len(df_filtered)} 行")
-    
-    df = df_filtered
-else:
-    st.sidebar.warning("CSVに有効な 'Date' 列が見つかりません。")
 
-# 画像取得
 bg_image, img_err = fetch_github_image(GITHUB_USER, GITHUB_REPO, GITHUB_IMAGE, GITHUB_TOKEN)
 
 # --- 分析画面 ---
 players = sorted(list(set(df['Batter'].dropna().unique()) | set(df['Pitcher'].dropna().unique())))
-
 if not players:
     st.warning("選択された期間に該当する選手データがありません。")
     st.stop()
@@ -195,7 +165,7 @@ if not players:
 selected_player = st.selectbox("選手を選択", players)
 b_df = df[df['Batter'] == selected_player]
 
-tab1, tab2 = st.tabs(["📊 成績表", "🏟 打球方向"])
+tab1, tab2 = st.tabs(["📊 詳細成績・グラフ", "🏟 打球方向"])
 
 with tab1:
     if b_df.empty:
@@ -211,20 +181,17 @@ with tab1:
         sac = b_df['HitResult'].isin(['犠打', '犠飛']).sum()
         ab = pa - bb - hbp - sac
         
-        # 全投球数
         total_pitches = len(b_df)
         swings = b_df['is_Swing'].sum()
         contact_cnt = b_df['is_Contact'].sum()
         misses = b_df['is_Miss'].sum()
         
-        # Zone系
         z_df = b_df[b_df['is_Zone']]
         z_total = len(z_df)
         z_swings = z_df['is_Swing'].sum()
         z_contact = z_df['is_Contact'].sum()
-        z_takes = z_total - z_swings # ストライク見逃し数
+        z_takes = z_total - z_swings
         
-        # Out系
         o_df = b_df[~b_df['is_Zone']]
         o_total = len(o_df)
         o_swings = o_df['is_Swing'].sum()
@@ -232,15 +199,14 @@ with tab1:
 
         def pct(n, d): return (n / d * 100) if d > 0 else 0
         
-        # 📊 表示する指標の変更
         stats = {
             "試合数": b_df['Date'].nunique() if 'Date' in b_df.columns else 1,
             "打席数": pa,
             "打率": f"{hits/ab:.3f}" if ab > 0 else "-",
             "四球率": f"{pct(bb, pa):.1f}%",
             "三振率": f"{pct(so, pa):.1f}%",
-            "スイング率": f"{pct(swings, total_pitches):.1f}%",            # ← 追加
-            "ストライク見逃し率": f"{pct(z_takes, z_total):.1f}%",       # ← 追加
+            "スイング率": f"{pct(swings, total_pitches):.1f}%",
+            "ストライク見逃し率": f"{pct(z_takes, z_total):.1f}%",
             "O-Swing%": f"{pct(o_swings, o_total):.1f}%",
             "Z-Swing%": f"{pct(z_swings, z_total):.1f}%",
             "SwStr%": f"{pct(misses, total_pitches):.1f}%",
@@ -252,8 +218,111 @@ with tab1:
         st.subheader("打撃成績詳細")
         st.table(pd.DataFrame([stats]))
         
+        # ==========================================
+        # 📊 追加グラフセクション
+        # ==========================================
+        st.markdown("---")
+        st.subheader("📈 アプローチ分析")
+
+        # 1. カウント別のスイング率・ストライク見逃し率
+        c_df = b_df.copy()
+        c_df['Count'] = c_df['Ball'].astype(str) + "-" + c_df['Strike'].astype(str)
+        count_stats = []
+        for c in sorted(c_df['Count'].unique()):
+            temp = c_df[c_df['Count'] == c]
+            z_temp = temp[temp['is_Zone']]
+            
+            t_swings = temp['is_Swing'].sum()
+            t_z_takes = len(z_temp) - z_temp['is_Swing'].sum()
+            
+            s_rate = pct(t_swings, len(temp))
+            t_rate = pct(t_z_takes, len(z_temp))
+            
+            count_stats.append({"Count": c, "スイング率(%)": s_rate, "見逃し率(%)": t_rate, "投球数": len(temp)})
+
+        if count_stats:
+            count_df = pd.DataFrame(count_stats)
+            fig_count = go.Figure()
+            fig_count.add_trace(go.Bar(x=count_df['Count'], y=count_df['スイング率(%)'], name='スイング率', marker_color='#1f77b4'))
+            fig_count.add_trace(go.Bar(x=count_df['Count'], y=count_df['見逃し率(%)'], name='見逃し率(Z)', marker_color='#ff7f0e'))
+            fig_count.update_layout(title="カウント別 スイング率・ストライク見逃し率", barmode='group', xaxis_title="ボール - ストライク", yaxis_title="割合(%)")
+            st.plotly_chart(fig_count, use_container_width=True)
+
+        # 9分割グラフのレイアウト用
+        col1, col2 = st.columns(2)
+
+        # マス目の配置 (1:左上, 2:中上, 3:右上 ... 9:右下)
+        # PlotlyのHeatmap等に合わせるための座標設定
+        zone_map = {1: (0, 2), 2: (1, 2), 3: (2, 2),
+                    4: (0, 1), 5: (1, 1), 6: (2, 1),
+                    7: (0, 0), 8: (1, 0), 9: (2, 0)}
+
+        # 2. コース別 スイング・見逃し率 (9分割)
+        with col1:
+            st.markdown("**コース別 スイング率 / ストライク見逃し率**")
+            zone_texts = []
+            xs = []
+            ys = []
+            
+            for z in range(1, 10):
+                z_data = b_df[b_df['PitchLocation'] == z]
+                if not z_data.empty:
+                    s_rate = pct(z_data['is_Swing'].sum(), len(z_data))
+                    t_rate = pct(len(z_data) - z_data['is_Swing'].sum(), len(z_data))
+                    txt = f"振:{s_rate:.0f}%<br>見:{t_rate:.0f}%"
+                else:
+                    txt = "-"
+                
+                x, y = zone_map[z]
+                xs.append(x)
+                ys.append(y)
+                zone_texts.append(txt)
+
+            fig_zone1 = go.Figure(go.Scatter(
+                x=xs, y=ys, mode="text", text=zone_texts, textfont=dict(size=14, color="black")
+            ))
+            # 枠線を描画して3x3のマス目を作る
+            fig_zone1.update_layout(
+                xaxis=dict(range=[-0.5, 2.5], showticklabels=False, showgrid=True, gridcolor='gray', zeroline=False),
+                yaxis=dict(range=[-0.5, 2.5], showticklabels=False, showgrid=True, gridcolor='gray', zeroline=False),
+                width=300, height=300, margin=dict(l=20, r=20, t=20, b=20), plot_bgcolor="whitesmoke"
+            )
+            st.plotly_chart(fig_zone1, use_container_width=True)
+
+        # 3. コース別 打球傾向 (ゴロ/フライ/ライナー)
+        with col2:
+            st.markdown("**コース別 ゴロ / フライ / ライナー 発生率**")
+            hit_texts = []
+            h_xs = []
+            h_ys = []
+            
+            for z in range(1, 10):
+                z_data = b_df[(b_df['PitchLocation'] == z) & (b_df['HitType'].notna())]
+                if not z_data.empty:
+                    goro = pct((z_data['HitType'] == 'ゴロ').sum(), len(z_data))
+                    fly = pct((z_data['HitType'] == 'フライ').sum(), len(z_data))
+                    liner = pct((z_data['HitType'] == 'ライナー').sum(), len(z_data))
+                    txt = f"ゴ:{goro:.0f}%<br>フ:{fly:.0f}%<br>ラ:{liner:.0f}%"
+                else:
+                    txt = "-"
+                
+                x, y = zone_map[z]
+                h_xs.append(x)
+                h_ys.append(y)
+                hit_texts.append(txt)
+
+            fig_zone2 = go.Figure(go.Scatter(
+                x=h_xs, y=h_ys, mode="text", text=hit_texts, textfont=dict(size=12, color="black")
+            ))
+            fig_zone2.update_layout(
+                xaxis=dict(range=[-0.5, 2.5], showticklabels=False, showgrid=True, gridcolor='gray', zeroline=False),
+                yaxis=dict(range=[-0.5, 2.5], showticklabels=False, showgrid=True, gridcolor='gray', zeroline=False),
+                width=300, height=300, margin=dict(l=20, r=20, t=20, b=20), plot_bgcolor="whitesmoke"
+            )
+            st.plotly_chart(fig_zone2, use_container_width=True)
+
         with st.expander("データログ"):
-            cols = ['Date', 'Inning', 'Pitcher', 'PitchResult', 'HitResult', 'Memo']
+            cols = ['Date', 'Inning', 'Pitcher', 'PitchResult', 'HitResult', 'HitType', 'Memo']
             st.dataframe(b_df[[c for c in cols if c in df.columns]].fillna('').sort_values('Date'))
 
 with tab2:
@@ -287,6 +356,7 @@ with tab2:
             
         fig.update_layout(**layout)
         st.plotly_chart(fig, use_container_width=True)
+
 
 
 
