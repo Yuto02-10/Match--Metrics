@@ -5,7 +5,6 @@ import io
 import math
 import random
 import plotly.graph_objects as go
-import plotly.express as px
 import base64
 import datetime
 
@@ -18,7 +17,7 @@ GITHUB_TOKEN = None             # Privateなら必須
 
 # --- アプリ設定 ---
 st.set_page_config(page_title="チームデータ分析", layout="wide")
-st.title("⚾️ チームデータ統合システム (詳細グラフ追加版)")
+st.title("⚾️ チームデータ統合システム (コース拡張版)")
 
 # --- 1. データ取得関数 ---
 @st.cache_data(ttl=3600, show_spinner=False)
@@ -224,7 +223,7 @@ with tab1:
         st.markdown("---")
         st.subheader("📈 アプローチ分析")
 
-        # 1. カウント別のスイング率・ストライク見逃し率
+        # 1. カウント別
         c_df = b_df.copy()
         c_df['Count'] = c_df['Ball'].astype(str) + "-" + c_df['Strike'].astype(str)
         count_stats = []
@@ -248,30 +247,52 @@ with tab1:
             fig_count.update_layout(title="カウント別 スイング率・ストライク見逃し率", barmode='group', xaxis_title="ボール - ストライク", yaxis_title="割合(%)")
             st.plotly_chart(fig_count, use_container_width=True)
 
-        # 9分割グラフのレイアウト用
+
+        # コース別グラフの配置定義 (1〜9がストライクゾーン、11〜14がボールゾーン)
+        # 座標系: x=1,2,3 y=1,2,3 がストライクゾーン
+        zone_map = {
+            1: (1, 3), 2: (2, 3), 3: (3, 3),
+            4: (1, 2), 5: (2, 2), 6: (3, 2),
+            7: (1, 1), 8: (2, 1), 9: (3, 1),
+            11: (2, 4.2),  # 高め
+            13: (2, -0.2), # 低め
+            12: (-0.2, 2), # 12番コース (左側)
+            14: (4.2, 2)   # 14番コース (右側)
+        }
+        
+        zone_names = {11: "高め", 13: "低め", 12: "コース12", 14: "コース14"}
+
+        # ストライクゾーンを描くための枠線 (3x3グリッド)
+        board_shapes = [
+            # 外枠
+            dict(type="rect", x0=0.5, y0=0.5, x1=3.5, y1=3.5, line=dict(color="black", width=2)),
+            # 縦線
+            dict(type="line", x0=1.5, y0=0.5, x1=1.5, y1=3.5, line=dict(color="gray", width=1, dash="dash")),
+            dict(type="line", x0=2.5, y0=0.5, x1=2.5, y1=3.5, line=dict(color="gray", width=1, dash="dash")),
+            # 横線
+            dict(type="line", x0=0.5, y0=1.5, x1=3.5, y1=1.5, line=dict(color="gray", width=1, dash="dash")),
+            dict(type="line", x0=0.5, y0=2.5, x1=3.5, y1=2.5, line=dict(color="gray", width=1, dash="dash")),
+        ]
+
         col1, col2 = st.columns(2)
 
-        # マス目の配置 (1:左上, 2:中上, 3:右上 ... 9:右下)
-        # PlotlyのHeatmap等に合わせるための座標設定
-        zone_map = {1: (0, 2), 2: (1, 2), 3: (2, 2),
-                    4: (0, 1), 5: (1, 1), 6: (2, 1),
-                    7: (0, 0), 8: (1, 0), 9: (2, 0)}
-
-        # 2. コース別 スイング・見逃し率 (9分割)
+        # 2. コース別 スイング・見逃し率
         with col1:
-            st.markdown("**コース別 スイング率 / ストライク見逃し率**")
+            st.markdown("**コース別 スイング率 / 見逃し率**")
             zone_texts = []
-            xs = []
-            ys = []
+            xs, ys = [], []
             
-            for z in range(1, 10):
+            for z in [1,2,3,4,5,6,7,8,9, 11,12,13,14]:
                 z_data = b_df[b_df['PitchLocation'] == z]
+                # ボールゾーンのみラベル名を追加
+                prefix = f"<b>{zone_names[z]}</b><br>" if z in zone_names else ""
+                
                 if not z_data.empty:
                     s_rate = pct(z_data['is_Swing'].sum(), len(z_data))
                     t_rate = pct(len(z_data) - z_data['is_Swing'].sum(), len(z_data))
-                    txt = f"振:{s_rate:.0f}%<br>見:{t_rate:.0f}%"
+                    txt = f"{prefix}振:{s_rate:.0f}%<br>見:{t_rate:.0f}%"
                 else:
-                    txt = "-"
+                    txt = f"{prefix}-"
                 
                 x, y = zone_map[z]
                 xs.append(x)
@@ -279,32 +300,33 @@ with tab1:
                 zone_texts.append(txt)
 
             fig_zone1 = go.Figure(go.Scatter(
-                x=xs, y=ys, mode="text", text=zone_texts, textfont=dict(size=14, color="black")
+                x=xs, y=ys, mode="text", text=zone_texts, textfont=dict(size=12, color="black")
             ))
-            # 枠線を描画して3x3のマス目を作る
             fig_zone1.update_layout(
-                xaxis=dict(range=[-0.5, 2.5], showticklabels=False, showgrid=True, gridcolor='gray', zeroline=False),
-                yaxis=dict(range=[-0.5, 2.5], showticklabels=False, showgrid=True, gridcolor='gray', zeroline=False),
-                width=300, height=300, margin=dict(l=20, r=20, t=20, b=20), plot_bgcolor="whitesmoke"
+                xaxis=dict(range=[-1, 5], showticklabels=False, showgrid=False, zeroline=False),
+                yaxis=dict(range=[-1, 5], showticklabels=False, showgrid=False, zeroline=False),
+                width=350, height=350, margin=dict(l=10, r=10, t=10, b=10), plot_bgcolor="whitesmoke",
+                shapes=board_shapes
             )
             st.plotly_chart(fig_zone1, use_container_width=True)
 
-        # 3. コース別 打球傾向 (ゴロ/フライ/ライナー)
+        # 3. コース別 打球傾向
         with col2:
             st.markdown("**コース別 ゴロ / フライ / ライナー 発生率**")
             hit_texts = []
-            h_xs = []
-            h_ys = []
+            h_xs, h_ys = [], []
             
-            for z in range(1, 10):
+            for z in [1,2,3,4,5,6,7,8,9, 11,12,13,14]:
                 z_data = b_df[(b_df['PitchLocation'] == z) & (b_df['HitType'].notna())]
+                prefix = f"<b>{zone_names[z]}</b><br>" if z in zone_names else ""
+                
                 if not z_data.empty:
                     goro = pct((z_data['HitType'] == 'ゴロ').sum(), len(z_data))
                     fly = pct((z_data['HitType'] == 'フライ').sum(), len(z_data))
                     liner = pct((z_data['HitType'] == 'ライナー').sum(), len(z_data))
-                    txt = f"ゴ:{goro:.0f}%<br>フ:{fly:.0f}%<br>ラ:{liner:.0f}%"
+                    txt = f"{prefix}ゴ:{goro:.0f}%<br>フ:{fly:.0f}%<br>ラ:{liner:.0f}%"
                 else:
-                    txt = "-"
+                    txt = f"{prefix}-"
                 
                 x, y = zone_map[z]
                 h_xs.append(x)
@@ -312,12 +334,13 @@ with tab1:
                 hit_texts.append(txt)
 
             fig_zone2 = go.Figure(go.Scatter(
-                x=h_xs, y=h_ys, mode="text", text=hit_texts, textfont=dict(size=12, color="black")
+                x=h_xs, y=h_ys, mode="text", text=hit_texts, textfont=dict(size=11, color="black")
             ))
             fig_zone2.update_layout(
-                xaxis=dict(range=[-0.5, 2.5], showticklabels=False, showgrid=True, gridcolor='gray', zeroline=False),
-                yaxis=dict(range=[-0.5, 2.5], showticklabels=False, showgrid=True, gridcolor='gray', zeroline=False),
-                width=300, height=300, margin=dict(l=20, r=20, t=20, b=20), plot_bgcolor="whitesmoke"
+                xaxis=dict(range=[-1, 5], showticklabels=False, showgrid=False, zeroline=False),
+                yaxis=dict(range=[-1, 5], showticklabels=False, showgrid=False, zeroline=False),
+                width=350, height=350, margin=dict(l=10, r=10, t=10, b=10), plot_bgcolor="whitesmoke",
+                shapes=board_shapes
             )
             st.plotly_chart(fig_zone2, use_container_width=True)
 
