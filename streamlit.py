@@ -16,7 +16,7 @@ GITHUB_TOKEN = None             # Privateなら必須
 
 # --- アプリ設定 ---
 st.set_page_config(page_title="チームデータ分析", layout="wide")
-st.title("⚾️ チームデータ統合システム (高精度対応版)")
+st.title("選手分析")
 
 # --- 1. データ取得関数 ---
 @st.cache_data(ttl=3600, show_spinner=False)
@@ -416,4 +416,5 @@ with tab2:
             
         fig.update_layout(**layout)
         st.plotly_chart(fig, use_container_width=True)
+
 
