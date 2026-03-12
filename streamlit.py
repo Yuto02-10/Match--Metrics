@@ -72,29 +72,65 @@ def fetch_github_image(user, repo, filename, token=None):
 def clean_and_process(df):
     if df.empty: return df
     
+    # 1. カラム名の余分な空白削除
     df.columns = df.columns.str.strip()
-    required = ['PitchLocation', 'PitchResult', 'HitResult', 'HitType', 'KorBB', 'Memo', 'Batter', 'Pitcher', 'Date', 'Ball', 'Strike']
+    
+    # ==========================================
+    # 🌟 新旧フォーマット両対応のための列名変換辞書
+    # ==========================================
+    column_mapping = {
+        'イニング': 'Inning',
+        'ボール': 'Ball',
+        'ストライク': 'Strike',
+        '投手': 'Pitcher',
+        '打者': 'Batter',
+        '球種': 'PitchType',
+        '投球位置': 'PitchLocation',
+        '投球結果': 'PitchResult',
+        '三振四球': 'KorBB',
+        '打撃結果': 'HitResult',
+        '打球タイプ': 'HitType',
+        'メモ': 'Memo',
+        '日付': 'Date'  # もし今後「日付」列ができても対応可能に
+    }
+    
+    # 日本語の列名が含まれていたら、プログラム用の英語名に変換（英語ならそのまま）
+    df = df.rename(columns=column_mapping)
+
+    # 🌟 Date列がない場合（新フォーマット）、ファイル名から日付を自動抽出
+    if 'Date' not in df.columns and 'SourceFile' in df.columns:
+        # 例: "2025-10-05_福井工業大学対北陸大学.csv" -> "2025-10-05" を抽出
+        df['Date'] = df['SourceFile'].str.extract(r'(\d{4}-\d{2}-\d{2})')
+
+    # 2. 必須カラムの存在保証（エラー防止）
+    required = ['PitchLocation', 'PitchResult', 'HitResult', 'HitType', 'KorBB', 'Memo', 'Batter', 'Pitcher', 'Date', 'Ball', 'Strike', 'PitchType']
     for col in required:
         if col not in df.columns: df[col] = None
     
+    # 3. 日付データの型変換
     df['Date'] = pd.to_datetime(df['Date'], errors='coerce')
     
+    # 4. 文字列データのクリーニング
     str_cols = df.select_dtypes(include=['object']).columns
     for col in str_cols:
         df[col] = df[col].astype(str).str.strip()
         df.loc[df[col] == 'nan', col] = None
 
+    # 5. 数値変換とゾーン判定
     df['PitchLocation'] = pd.to_numeric(df['PitchLocation'], errors='coerce')
     df['is_Zone'] = df['PitchLocation'].isin(range(1, 10))
     
+    # 6. スイング・コンタクト等の判定ロジック
     def check_result(val, keywords):
         if not isinstance(val, str): return False
         return any(k in val for k in keywords)
 
-    df['is_Swing'] = df['PitchResult'].apply(lambda x: check_result(str(x), ['空振', 'ファール', 'インプレー']))
+    # ※新しいCSVでは「見逃し」や「ファウル」表記になっている可能性があるため、キーワードを拡張
+    df['is_Swing'] = df['PitchResult'].apply(lambda x: check_result(str(x), ['空振', 'ファール', 'ファウル', 'インプレー']))
     df['is_Miss'] = df['PitchResult'].apply(lambda x: check_result(str(x), ['空振']))
-    df['is_Contact'] = df['PitchResult'].apply(lambda x: check_result(str(x), ['ファール', 'インプレー']))
+    df['is_Contact'] = df['PitchResult'].apply(lambda x: check_result(str(x), ['ファール', 'ファウル', 'インプレー']))
 
+    # 7. 座標変換 (Memo)
     def parse_xy(memo):
         rank_to_dist = {1: 10, 2: 65, 3: 110, 4: 155, 5: 195, 6: 240, 7: 290}
         dir_to_angle = {
@@ -429,6 +465,7 @@ with tab2:
             
         fig.update_layout(**layout)
         st.plotly_chart(fig, use_container_width=True)
+
 
 
 
