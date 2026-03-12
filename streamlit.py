@@ -75,9 +75,7 @@ def clean_and_process(df):
     # 1. カラム名の余分な空白削除
     df.columns = df.columns.str.strip()
     
-    # ==========================================
-    # 🌟 新旧フォーマット両対応のための列名変換辞書
-    # ==========================================
+    # 新旧フォーマット両対応のための列名変換辞書
     column_mapping = {
         'イニング': 'Inning',
         'ボール': 'Ball',
@@ -91,16 +89,11 @@ def clean_and_process(df):
         '打撃結果': 'HitResult',
         '打球タイプ': 'HitType',
         'メモ': 'Memo',
-        '日付': 'Date'  # もし今後「日付」列ができても対応可能に
+        '日付': 'Date' 
     }
     
     # 日本語の列名が含まれていたら、プログラム用の英語名に変換（英語ならそのまま）
     df = df.rename(columns=column_mapping)
-
-    # 🌟 Date列がない場合（新フォーマット）、ファイル名から日付を自動抽出
-    if 'Date' not in df.columns and 'SourceFile' in df.columns:
-        # 例: "2025-10-05_福井工業大学対北陸大学.csv" -> "2025-10-05" を抽出
-        df['Date'] = df['SourceFile'].str.extract(r'(\d{4}-\d{2}-\d{2})')
 
     # 2. 必須カラムの存在保証（エラー防止）
     required = ['PitchLocation', 'PitchResult', 'HitResult', 'HitType', 'KorBB', 'Memo', 'Batter', 'Pitcher', 'Date', 'Ball', 'Strike', 'PitchType']
@@ -125,10 +118,11 @@ def clean_and_process(df):
         if not isinstance(val, str): return False
         return any(k in val for k in keywords)
 
-    # ※新しいCSVでは「見逃し」や「ファウル」表記になっている可能性があるため、キーワードを拡張
+    # 「ファール」「ファウル」表記揺れ対応
     df['is_Swing'] = df['PitchResult'].apply(lambda x: check_result(str(x), ['空振', 'ファール', 'ファウル', 'インプレー']))
     df['is_Miss'] = df['PitchResult'].apply(lambda x: check_result(str(x), ['空振']))
     df['is_Contact'] = df['PitchResult'].apply(lambda x: check_result(str(x), ['ファール', 'ファウル', 'インプレー']))
+    df['is_Strike'] = df['PitchResult'].apply(lambda x: not check_result(str(x), ['ボール']))
 
     # 7. 座標変換 (Memo)
     def parse_xy(memo):
@@ -158,7 +152,6 @@ def clean_and_process(df):
 
     df[['打球X', '打球Y']] = df['Memo'].apply(parse_xy)
     return df
-
 # --- 共通のグラフ設定群 ---
 def pct(n, d): return (n / d * 100) if d > 0 else 0
 
@@ -465,6 +458,7 @@ with tab2:
             
         fig.update_layout(**layout)
         st.plotly_chart(fig, use_container_width=True)
+
 
 
 
