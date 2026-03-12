@@ -6,18 +6,17 @@ import math
 import random
 import plotly.graph_objects as go
 import base64
-import datetime
 
 # --- ⚙️ 設定エリア ---
-GITHUB_USER = "Yuto02-10"   # ユーザー名
-GITHUB_REPO = "Match--Metrics"  # リポジトリ名
+GITHUB_USER = "your_username"   # ユーザー名
+GITHUB_REPO = "your_repo_name"  # リポジトリ名
 GITHUB_FOLDER = "試合データ"      # フォルダ名
 GITHUB_IMAGE = "打球分析.png"    # 画像ファイル名
 GITHUB_TOKEN = None             # Privateなら必須
 
 # --- アプリ設定 ---
 st.set_page_config(page_title="チームデータ分析", layout="wide")
-st.title("⚾️ チームデータ統合システム (投打統合版)")
+st.title("⚾️ チームデータ統合システム (最新版)")
 
 # --- 1. データ取得関数 ---
 @st.cache_data(ttl=3600, show_spinner=False)
@@ -72,59 +71,42 @@ def fetch_github_image(user, repo, filename, token=None):
 def clean_and_process(df):
     if df.empty: return df
     
-    # 1. カラム名の余分な空白削除
     df.columns = df.columns.str.strip()
     
-    # 新旧フォーマット両対応のための列名変換辞書
+    # 新旧フォーマット両対応のための列名変換
     column_mapping = {
-        'イニング': 'Inning',
-        'ボール': 'Ball',
-        'ストライク': 'Strike',
-        '投手': 'Pitcher',
-        '打者': 'Batter',
-        '球種': 'PitchType',
-        '投球位置': 'PitchLocation',
-        '投球結果': 'PitchResult',
-        '三振四球': 'KorBB',
-        '打撃結果': 'HitResult',
-        '打球タイプ': 'HitType',
-        'メモ': 'Memo',
-        '日付': 'Date' 
+        'イニング': 'Inning', 'ボール': 'Ball', 'ストライク': 'Strike',
+        '投手': 'Pitcher', '打者': 'Batter', '球種': 'PitchType',
+        '投球位置': 'PitchLocation', '投球結果': 'PitchResult',
+        '三振四球': 'KorBB', '打撃結果': 'HitResult', '打球タイプ': 'HitType',
+        'メモ': 'Memo', '日付': 'Date' 
     }
-    
-    # 日本語の列名が含まれていたら、プログラム用の英語名に変換（英語ならそのまま）
     df = df.rename(columns=column_mapping)
 
-    # 2. 必須カラムの存在保証（エラー防止）
-    required = ['PitchLocation', 'PitchResult', 'HitResult', 'HitType', 'KorBB', 'Memo', 'Batter', 'Pitcher', 'Date', 'Ball', 'Strike', 'PitchType']
+    required = ['PitchLocation', 'PitchResult', 'HitResult', 'HitType', 'KorBB', 'Memo', 'Batter', 'Pitcher', 'Date', 'Ball', 'Strike']
     for col in required:
         if col not in df.columns: df[col] = None
     
-    # 3. 日付データの型変換
     df['Date'] = pd.to_datetime(df['Date'], errors='coerce')
     
-    # 4. 文字列データのクリーニング
     str_cols = df.select_dtypes(include=['object']).columns
     for col in str_cols:
         df[col] = df[col].astype(str).str.strip()
         df.loc[df[col] == 'nan', col] = None
 
-    # 5. 数値変換とゾーン判定
     df['PitchLocation'] = pd.to_numeric(df['PitchLocation'], errors='coerce')
     df['is_Zone'] = df['PitchLocation'].isin(range(1, 10))
     
-    # 6. スイング・コンタクト等の判定ロジック
     def check_result(val, keywords):
         if not isinstance(val, str): return False
         return any(k in val for k in keywords)
 
-    # 「ファール」「ファウル」表記揺れ対応
+    # 「ファウル」「空振り（り）」など新表記に対応
     df['is_Swing'] = df['PitchResult'].apply(lambda x: check_result(str(x), ['空振', 'ファール', 'ファウル', 'インプレー']))
     df['is_Miss'] = df['PitchResult'].apply(lambda x: check_result(str(x), ['空振']))
     df['is_Contact'] = df['PitchResult'].apply(lambda x: check_result(str(x), ['ファール', 'ファウル', 'インプレー']))
     df['is_Strike'] = df['PitchResult'].apply(lambda x: not check_result(str(x), ['ボール']))
 
-    # 7. 座標変換 (Memo)
     def parse_xy(memo):
         rank_to_dist = {1: 10, 2: 65, 3: 110, 4: 155, 5: 195, 6: 240, 7: 290}
         dir_to_angle = {
@@ -152,6 +134,7 @@ def clean_and_process(df):
 
     df[['打球X', '打球Y']] = df['Memo'].apply(parse_xy)
     return df
+
 # --- 共通のグラフ設定群 ---
 def pct(n, d): return (n / d * 100) if d > 0 else 0
 
@@ -173,6 +156,11 @@ board_shapes = [
 
 # --- メイン処理開始 ---
 st.sidebar.header("📁 設定・読み込み")
+
+# 更新ボタン（キャッシュクリア用）
+if st.sidebar.button("🔄 データを最新に更新"):
+    st.cache_data.clear()
+    st.rerun()
 
 with st.spinner("データ取得中..."):
     df, err = fetch_github_data(GITHUB_USER, GITHUB_REPO, GITHUB_FOLDER, GITHUB_TOKEN)
@@ -205,32 +193,22 @@ st.sidebar.markdown("---")
 analysis_mode = st.sidebar.radio("🔍 分析モード", ["👤 打者分析", "⚾ 投手分析"])
 st.sidebar.markdown("---")
 
-
 # ==========================================
-# 👤 打者分析モード
+# データ選択 UI
 # ==========================================
 if analysis_mode == "👤 打者分析":
     players = sorted(list(df['Batter'].dropna().unique()))
     if not players: st.warning("期間内に打者データがありません。"); st.stop()
-
     selected_player = st.sidebar.selectbox("打者を選択", players)
     target_df = df[df['Batter'] == selected_player]
-
     st.header(f"👤 {selected_player} 選手の打撃分析")
 
-
-# ==========================================
-# ⚾ 投手分析モード
-# ==========================================
-elif analysis_mode == "⚾ 投手分析":
+else:
     players = sorted(list(df['Pitcher'].dropna().unique()))
     if not players: st.warning("期間内に投手データがありません。"); st.stop()
-
     selected_player = st.sidebar.selectbox("投手を選択", players)
     target_df = df[df['Pitcher'] == selected_player]
-
     st.header(f"⚾ {selected_player} 投手の投球分析")
-
 
 # --- 共通の描画セクション ---
 tab1, tab2 = st.tabs(["📊 詳細成績・グラフ", "🏟 打球方向"])
@@ -244,9 +222,9 @@ with tab1:
         pa = len(pa_rows)
         hits = target_df['HitResult'].isin(['単打', '二塁打', '三塁打', '本塁打']).sum()
         hr = target_df['HitResult'].isin(['本塁打']).sum()
-        bb = target_df['KorBB'].isin(['四球']).sum()
+        bb = target_df['KorBB'].astype(str).str.contains('四球').sum()
         hbp = target_df['PitchResult'].astype(str).str.contains('死球').sum()
-        so = target_df['KorBB'].astype(str).str.contains('三振').sum()
+        so = target_df['KorBB'].astype(str).str.contains('三振').sum() # 空振り三振・見逃し三振両方対応
         sac = target_df['HitResult'].isin(['犠打', '犠飛']).sum()
         ab = pa - bb - hbp - sac
         
@@ -272,7 +250,6 @@ with tab1:
         fb = (batted_balls['HitType'] == 'フライ').sum()
         ld = (batted_balls['HitType'] == 'ライナー').sum()
 
-        # テーブルの表示切り替え
         if analysis_mode == "👤 打者分析":
             stats = {
                 "試合数": target_df['Date'].nunique() if 'Date' in target_df.columns else 1,
@@ -289,18 +266,16 @@ with tab1:
             }
             st.subheader("打撃成績")
             
-        else: # 投手分析モード
-            # アウト数・投球イニングの推定計算
-            outs = so + target_df['HitResult'].isin(['凡打']).sum() + target_df['HitResult'].isin(['犠打', '犠飛']).sum()
+        else:
+            # アウト数計算 (新旧対応: 凡打, アウト)
+            outs = so + target_df['HitResult'].isin(['凡打', 'アウト']).sum() + target_df['HitResult'].isin(['犠打', '犠飛']).sum()
             ip_full = outs // 3
             ip_frac = outs % 3
             ip_display = f"{ip_full}.{ip_frac}"
             ip_math = outs / 3.0
             
-            # FIPの計算 (定数は3.20に設定)
             fip = ((13 * hr + 3 * (bb + hbp) - 2 * so) / ip_math + 3.20) if ip_math > 0 else 0.0
             
-            # 投手用テーブル
             stats = {
                 "試合数": target_df['Date'].nunique() if 'Date' in target_df.columns else 1,
                 "投球イニング": ip_display,
@@ -324,7 +299,6 @@ with tab1:
         st.markdown("---")
         st.subheader("📈 アプローチ・傾向分析")
 
-        # 1. カウント別
         c_df = target_df.copy()
         c_df['Count'] = c_df['Ball'].astype(str) + "-" + c_df['Strike'].astype(str)
         count_stats = []
@@ -343,7 +317,6 @@ with tab1:
         if count_stats:
             count_df = pd.DataFrame(count_stats)
             fig_count = go.Figure()
-            # 投手の場合は「打者のスイング率」になる
             label_s = "スイング率" if analysis_mode == "👤 打者分析" else "打者のスイング率"
             label_t = "見逃し率(Z)" if analysis_mode == "👤 打者分析" else "打者の見逃し率(Z)"
 
@@ -354,7 +327,6 @@ with tab1:
 
         col1, col2 = st.columns(2)
 
-        # 2. コース別 スイング・見逃し率 (四隅対応)
         with col1:
             st.markdown(f"**コース別 {label_s} / {label_t}**")
             zone_texts = []
@@ -376,9 +348,7 @@ with tab1:
                 ys.append(y)
                 zone_texts.append(txt)
 
-            fig_zone1 = go.Figure(go.Scatter(
-                x=xs, y=ys, mode="text", text=zone_texts, textfont=dict(size=12, color="black")
-            ))
+            fig_zone1 = go.Figure(go.Scatter(x=xs, y=ys, mode="text", text=zone_texts, textfont=dict(size=12, color="black")))
             fig_zone1.update_layout(
                 xaxis=dict(range=[-1, 5], showticklabels=False, showgrid=False, zeroline=False),
                 yaxis=dict(range=[-1, 5], showticklabels=False, showgrid=False, zeroline=False),
@@ -387,7 +357,6 @@ with tab1:
             )
             st.plotly_chart(fig_zone1, use_container_width=True)
 
-        # 3. コース別 打球傾向 (四隅対応)
         with col2:
             st.markdown("**コース別 ゴロ / フライ / ライナー 発生率**")
             hit_texts = []
@@ -410,9 +379,7 @@ with tab1:
                 h_ys.append(y)
                 hit_texts.append(txt)
 
-            fig_zone2 = go.Figure(go.Scatter(
-                x=h_xs, y=h_ys, mode="text", text=hit_texts, textfont=dict(size=11, color="black")
-            ))
+            fig_zone2 = go.Figure(go.Scatter(x=h_xs, y=h_ys, mode="text", text=hit_texts, textfont=dict(size=11, color="black")))
             fig_zone2.update_layout(
                 xaxis=dict(range=[-1, 5], showticklabels=False, showgrid=False, zeroline=False),
                 yaxis=dict(range=[-1, 5], showticklabels=False, showgrid=False, zeroline=False),
@@ -432,8 +399,6 @@ with tab2:
         st.warning("この期間の打球データがありません")
     else:
         fig = go.Figure()
-        
-        # 色と形の設定（投手モードでも打たれた球種や打球を色分け）
         fig.add_trace(go.Scatter(
             x=chart_df['打球X'], y=chart_df['打球Y'],
             mode='markers',
@@ -458,21 +423,3 @@ with tab2:
             
         fig.update_layout(**layout)
         st.plotly_chart(fig, use_container_width=True)
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
