@@ -71,7 +71,11 @@ def fetch_github_image(user, repo, filename, token=None):
 def clean_and_process(df):
     if df.empty: return df
     
+    # 1. カラム名の余分な空白削除
     df.columns = df.columns.str.strip()
+    
+    # 🌟【追加】重複したカラム名がある場合、最初の一つだけを残してエラーを回避
+    df = df.loc[:, ~df.columns.duplicated(keep='first')].copy()
     
     # 新旧フォーマット両対応のための列名変換
     column_mapping = {
@@ -82,6 +86,9 @@ def clean_and_process(df):
         'メモ': 'Memo', '日付': 'Date' 
     }
     df = df.rename(columns=column_mapping)
+    
+    # 🌟【追加】リネーム後にも念のため重複を排除
+    df = df.loc[:, ~df.columns.duplicated(keep='first')].copy()
 
     required = ['PitchLocation', 'PitchResult', 'HitResult', 'HitType', 'KorBB', 'Memo', 'Batter', 'Pitcher', 'Date', 'Ball', 'Strike', 'プレーアウト数']
     for col in required:
@@ -92,8 +99,9 @@ def clean_and_process(df):
     # 【重要】ハイフンや空白を完全に「データなし(None)」に置き換える処理
     str_cols = df.select_dtypes(include=['object']).columns
     for col in str_cols:
-        df[col] = df[col].astype(str).str.strip()
-        df.loc[df[col].isin(['nan', 'None', '', '-']), col] = None
+        if isinstance(df[col], pd.Series): # 🌟【追加】安全のため、確実に1列のデータであることを確認して処理
+            df[col] = df[col].astype(str).str.strip()
+            df.loc[df[col].isin(['nan', 'None', '', '-']), col] = None
 
     df['PitchLocation'] = pd.to_numeric(df['PitchLocation'], errors='coerce')
     df['is_Zone'] = df['PitchLocation'].isin(range(1, 10))
@@ -408,3 +416,4 @@ with tab2:
             
         fig.update_layout(**layout)
         st.plotly_chart(fig, use_container_width=True)
+
