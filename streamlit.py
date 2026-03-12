@@ -71,41 +71,34 @@ def fetch_github_image(user, repo, filename, token=None):
 def clean_and_process(df):
     if df.empty: return df
     
-    # 1. カラム名の余分な空白削除
     df.columns = df.columns.str.strip()
-    
-    # 🌟【追加】重複したカラム名がある場合、最初の一つだけを残してエラーを回避
     df = df.loc[:, ~df.columns.duplicated(keep='first')].copy()
     
-    # 新旧フォーマット両対応のための列名変換
     column_mapping = {
         'イニング': 'Inning', 'ボール': 'Ball', 'ストライク': 'Strike',
         '投手': 'Pitcher', '打者': 'Batter', '球種': 'PitchType',
         '投球位置': 'PitchLocation', '投球結果': 'PitchResult',
         '三振四球': 'KorBB', '打撃結果': 'HitResult', '打球タイプ': 'HitType',
-        'メモ': 'Memo', '日付': 'Date' 
+        'メモ': 'Memo', '日付': 'Date', 'プレーアウト数': 'PlayOuts'
     }
     df = df.rename(columns=column_mapping)
-    
-    # 🌟【追加】リネーム後にも念のため重複を排除
     df = df.loc[:, ~df.columns.duplicated(keep='first')].copy()
 
-    required = ['PitchLocation', 'PitchResult', 'HitResult', 'HitType', 'KorBB', 'Memo', 'Batter', 'Pitcher', 'Date', 'Ball', 'Strike', 'プレーアウト数']
+    required = ['PitchLocation', 'PitchResult', 'HitResult', 'HitType', 'KorBB', 'Memo', 'Batter', 'Pitcher', 'Date', 'Ball', 'Strike', 'PlayOuts']
     for col in required:
         if col not in df.columns: df[col] = None
     
     df['Date'] = pd.to_datetime(df['Date'], errors='coerce')
     
-    # 【重要】ハイフンや空白を完全に「データなし(None)」に置き換える処理
     str_cols = df.select_dtypes(include=['object']).columns
     for col in str_cols:
-        if isinstance(df[col], pd.Series): # 🌟【追加】安全のため、確実に1列のデータであることを確認して処理
+        if isinstance(df[col], pd.Series):
             df[col] = df[col].astype(str).str.strip()
             df.loc[df[col].isin(['nan', 'None', '', '-']), col] = None
 
     df['PitchLocation'] = pd.to_numeric(df['PitchLocation'], errors='coerce')
     df['is_Zone'] = df['PitchLocation'].isin(range(1, 10))
-    df['プレーアウト数'] = pd.to_numeric(df['プレーアウト数'], errors='coerce').fillna(0)
+    df['PlayOuts'] = pd.to_numeric(df['PlayOuts'], errors='coerce').fillna(0)
     
     def check_result(val, keywords):
         if not isinstance(val, str): return False
@@ -174,7 +167,12 @@ with st.spinner("データ取得中..."):
 
 if df.empty:
     st.error(f"データ取得失敗: {err}")
-    st.stop()
+    st.info("手動でCSVをアップロードしてください")
+    uploaded = st.file_uploader("CSVアップロード", accept_multiple_files=True)
+    if uploaded:
+        df = pd.concat([pd.read_csv(f).assign(SourceFile=f.name) for f in uploaded], ignore_index=True)
+    else:
+        st.stop()
 
 df = clean_and_process(df)
 
@@ -211,7 +209,6 @@ with tab1:
     if target_df.empty:
         st.warning("この期間のデータはありません")
     else:
-        # パフォーマンスに直結する正確なPA(打席)計算
         pa_rows = target_df[(target_df['KorBB'].notna()) | (target_df['HitResult'].notna()) | (target_df['PitchResult'].astype(str).str.contains('死球'))]
         pa = len(pa_rows)
         hits = target_df['HitResult'].isin(['単打', '二塁打', '三塁打', '本塁打']).sum()
@@ -260,9 +257,8 @@ with tab1:
             st.subheader("打撃成績")
             
         else:
-            # 完璧なアウト計算 (プレーアウト数があればそれを使用、なければフォールバック)
-            outs = target_df['プレーアウト数'].sum()
-            if outs == 0 and pa > 0: # プレーアウト数が全く入力されていない場合の予備ロジック
+            outs = target_df['PlayOuts'].sum()
+            if outs == 0 and pa > 0: 
                 outs = so + target_df['HitResult'].isin(['凡打', 'アウト', '併殺打']).sum() + target_df['HitResult'].isin(['犠打', '犠飛']).sum()
                 
             ip_full = outs // 3
@@ -299,29 +295,43 @@ with tab1:
             temp = c_df[c_df['Count'] == c]
             z_temp = temp[temp['is_Zone']]
             
+            # 各種数値を計算
             t_swings = temp['is_Swing'].sum()
             t_z_takes = len(z_temp) - z_temp['is_Swing'].sum()
+            t_all_takes = len(temp) - t_swings  # 全体の見逃し数
             
             s_rate = pct(t_swings, len(temp))
-            t_rate = pct(t_z_takes, len(z_temp))
+            z_t_rate = pct(t_z_takes, len(z_temp))
+            all_t_rate = pct(t_all_takes, len(temp))
             
-            count_stats.append({"Count": c, "スイング率(%)": s_rate, "見逃し率(%)": t_rate, "球数": len(temp)})
+            count_stats.append({
+                "Count": c, 
+                "スイング率(%)": s_rate, 
+                "ゾーン内見逃し率(%)": z_t_rate, 
+                "全体見逃し率(%)": all_t_rate, 
+                "球数": len(temp)
+            })
 
         if count_stats:
             count_df = pd.DataFrame(count_stats)
             fig_count = go.Figure()
+            
+            # モードによってラベルの表現を変える
             label_s = "スイング率" if analysis_mode == "👤 打者分析" else "打者のスイング率"
-            label_t = "見逃し率(Z)" if analysis_mode == "👤 打者分析" else "打者の見逃し率(Z)"
+            label_zt = "ゾーン内見逃し率" if analysis_mode == "👤 打者分析" else "打者のゾーン内見逃し率"
+            label_at = "全体見逃し率" if analysis_mode == "👤 打者分析" else "打者の全体見逃し率"
 
             fig_count.add_trace(go.Bar(x=count_df['Count'], y=count_df['スイング率(%)'], name=label_s, marker_color='#1f77b4'))
-            fig_count.add_trace(go.Bar(x=count_df['Count'], y=count_df['見逃し率(%)'], name=label_t, marker_color='#ff7f0e'))
+            fig_count.add_trace(go.Bar(x=count_df['Count'], y=count_df['ゾーン内見逃し率(%)'], name=label_zt, marker_color='#ff7f0e'))
+            fig_count.add_trace(go.Bar(x=count_df['Count'], y=count_df['全体見逃し率(%)'], name=label_at, marker_color='#2ca02c'))
+            
             fig_count.update_layout(title="カウント別 スイング・見逃し傾向", barmode='group', xaxis_title="ボール - ストライク", yaxis_title="割合(%)")
             st.plotly_chart(fig_count, use_container_width=True)
 
         col1, col2 = st.columns(2)
 
         with col1:
-            st.markdown(f"**コース別 {label_s} / {label_t}**")
+            st.markdown(f"**コース別 {label_s} / 見逃し率(※)**<br><small>※コース別グラフは、その枠に対する全体見逃し率です</small>", unsafe_allow_html=True)
             zone_texts = []
             xs, ys = [], []
             
@@ -416,5 +426,3 @@ with tab2:
             
         fig.update_layout(**layout)
         st.plotly_chart(fig, use_container_width=True)
-
-
