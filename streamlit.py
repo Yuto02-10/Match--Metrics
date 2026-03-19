@@ -192,4 +192,91 @@ target_df = df[df['Batter' if mode == "👤 打者分析" else 'Pitcher'] == sel
 
 # 以降、成績計算・グラフ表示（前回のロジックを継承）
 st.subheader(f"{selected} 選手の分析結果")
-# (ここに前回の表・グラフ表示コードを続けてください)
+# --- 成績計算とグラフ表示 ---
+st.subheader(f"📊 {selected} 選手の分析結果")
+
+tab1, tab2 = st.tabs(["詳細成績・グラフ", "打球方向"])
+
+with tab1:
+    if target_df.empty:
+        st.warning("データがありません")
+    else:
+        # --- 指標計算 (新旧表記揺れを吸収) ---
+        # 打席数(PA)の定義：結果が入力されている行をカウント
+        pa_rows = target_df[target_df['HitResult'].notna() | target_df['KorBB'].notna() | target_df['PitchResult'].str.contains('死球', na=False)]
+        pa = len(pa_rows)
+        
+        # 安打・三振・四球などの集計
+        hits = target_df['HitResult'].isin(['単打', '二塁打', '三塁打', '本塁打', '安打']).sum()
+        hr = target_df['HitResult'].isin(['本塁打']).sum()
+        bb = target_df['KorBB'].astype(str).str.contains('四球').sum()
+        hbp = target_df['PitchResult'].astype(str).str.contains('死球').sum()
+        so = target_df['KorBB'].astype(str).str.contains('三振').sum()
+        sac = target_df['HitResult'].isin(['犠打', '犠飛']).sum()
+        ab = pa - bb - hbp - sac
+        
+        # アウト数の計算 (新旧対応)
+        # プレーアウト数列があれば優先、なければ文字から判定
+        outs = target_df['PlayOuts'].sum()
+        if outs == 0:
+            outs = so + target_df['HitResult'].isin(['凡打', 'アウト', '併殺打']).sum() + sac
+
+        if mode == "👤 打者分析":
+            stats = {
+                "打席": pa,
+                "打率": f"{hits/ab:.3f}" if ab > 0 else ".000",
+                "四球率": f"{pct(bb, pa):.1f}%",
+                "三振率": f"{pct(so, pa):.1f}%",
+                "スイング率": f"{pct(target_df['is_Swing'].sum(), len(target_df)):.1f}%",
+                "空振り率(Whiff)": f"{pct(target_df['is_Miss'].sum(), target_df['is_Swing'].sum()):.1f}%",
+            }
+        else: # 投手分析
+            ip_math = outs / 3.0
+            fip = ((13*hr + 3*(bb+hbp) - 2*so) / ip_math + 3.2) if ip_math > 0 else 0
+            stats = {
+                "イニング": f"{int(outs//3)}.{int(outs%3)}",
+                "K%": f"{pct(so, pa):.1f}%",
+                "BB%": f"{pct(bb, pa):.1f}%",
+                "K-BB%": f"{pct(so-bb, pa):.1f}%",
+                "FIP": f"{fip:.2f}"
+            }
+        
+        st.table(pd.DataFrame([stats]))
+
+        # --- カウント別グラフ ---
+        st.markdown("---")
+        c_df = target_df.copy()
+        c_df['Count'] = c_df['Ball'].astype(str) + "-" + c_df['Strike'].astype(str)
+        count_list = []
+        for c in sorted(c_df['Count'].unique()):
+            tmp = c_df[c_df['Count'] == c]
+            if len(tmp) < 1: continue
+            sw = tmp['is_Swing'].sum()
+            z_tmp = tmp[tmp['is_Zone']]
+            z_take = len(z_tmp) - z_tmp['is_Swing'].sum()
+            count_list.append({
+                "Count": c,
+                "スイング率": pct(sw, len(tmp)),
+                "ゾーン内見逃率": pct(z_take, len(z_tmp)) if len(z_tmp) > 0 else 0
+            })
+        
+        if count_list:
+            c_plot = pd.DataFrame(count_list)
+            fig_c = go.Figure()
+            fig_c.add_trace(go.Bar(x=c_plot['Count'], y=c_plot['スイング率'], name='スイング率'))
+            fig_c.add_trace(go.Bar(x=c_plot['Count'], y=c_plot['ゾーン内見逃率'], name='ゾーン見逃し'))
+            fig_c.update_layout(title="カウント別傾向", barmode='group', yaxis_range=[0, 100])
+            st.plotly_chart(fig_c, use_container_width=True)
+
+with tab2:
+    # 打球方向の表示 (以前のロジックを継続)
+    chart_df = target_df.dropna(subset=['打球X', '打球Y'])
+    if chart_df.empty:
+        st.info("有効な打球データ（座標）がありません")
+    else:
+        fig = go.Figure()
+        fig.add_trace(go.Scatter(x=chart_df['打球X'], y=chart_df['打球Y'], mode='markers', text=chart_df['Memo']))
+        if bg_image:
+            fig.add_layout_image(dict(source=bg_image, xref="x", yref="y", x=-292.5, y=296.25, sizex=585, sizey=315, sizing="stretch", layer="below"))
+        fig.update_layout(width=600, height=600, xaxis_range=[-200, 200], yaxis_range=[-20, 240])
+        st.plotly_chart(fig)
