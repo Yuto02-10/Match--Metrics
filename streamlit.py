@@ -71,35 +71,64 @@ def fetch_github_image(user, repo, filename, token=None):
 def clean_and_process(df):
     if df.empty: return df
     
-    df.columns = df.columns.str.strip()
-    df = df.loc[:, ~df.columns.duplicated(keep='first')].copy()
+    # 1. カラム名の徹底クリーニング（全角・空白・改行コードの除去）
+    df.columns = df.columns.astype(str).str.strip().str.replace('　', '').str.replace('\n', '')
     
+    # 2. 新旧フォーマット両対応のための列名変換辞書（表記揺れをすべてカバー）
     column_mapping = {
-        'イニング': 'Inning', 'ボール': 'Ball', 'ストライク': 'Strike',
-        '投手': 'Pitcher', '打者': 'Batter', '球種': 'PitchType',
-        '投球位置': 'PitchLocation', '投球結果': 'PitchResult',
-        '三振四球': 'KorBB', '打撃結果': 'HitResult', '打球タイプ': 'HitType',
-        'メモ': 'Memo', '日付': 'Date', 'プレーアウト数': 'PlayOuts'
+        'イニング': 'Inning',
+        'ボール': 'Ball',
+        'ストライク': 'Strike',
+        '投手': 'Pitcher',
+        '打者': 'Batter',
+        '球種': 'PitchType',
+        '投球位置': 'PitchLocation',
+        '投球結果': 'PitchResult',
+        '三振四球': 'KorBB',
+        '打撃結果': 'HitResult',
+        '打球タイプ': 'HitType',
+        'メモ': 'Memo',
+        '日付': 'Date', 
+        'Ｄａｔｅ': 'Date',
+        'date': 'Date',
+        'プレーアウト数': 'PlayOuts'
     }
+    
+    # 列名を一括変換
     df = df.rename(columns=column_mapping)
+    
+    # 🌟 重要：変換後に「Date」という名前の列が複数できてしまった場合、一つにまとめる
     df = df.loc[:, ~df.columns.duplicated(keep='first')].copy()
 
-    required = ['PitchLocation', 'PitchResult', 'HitResult', 'HitType', 'KorBB', 'Memo', 'Batter', 'Pitcher', 'Date', 'Ball', 'Strike', 'PlayOuts']
+    # 3. 必須カラムの作成（存在しない場合は空で作る）
+    required = ['PitchLocation', 'PitchResult', 'HitResult', 'HitType', 'KorBB', 'Memo', 'Batter', 'Pitcher', 'Date', 'Ball', 'Strike', 'PlayOuts', 'SourceFile']
     for col in required:
-        if col not in df.columns: df[col] = None
-    
-    df['Date'] = pd.to_datetime(df['Date'], errors='coerce')
-    
-    str_cols = df.select_dtypes(include=['object']).columns
-    for col in str_cols:
-        if isinstance(df[col], pd.Series):
-            df[col] = df[col].astype(str).str.strip()
-            df.loc[df[col].isin(['nan', 'None', '', '-']), col] = None
+        if col not in df.columns:
+            df[col] = None
 
+    # 4. 選手名の表記揺れ補正（スペース除去）
+    for col in ['Batter', 'Pitcher']:
+        df[col] = df[col].astype(str).str.replace(r'\s+', '', regex=True).replace('nan', None)
+    
+    # 5. 日付の補正（1行目だけ入力されている場合のオートフィル）
+    df['Date'] = pd.to_datetime(df['Date'], errors='coerce')
+    if 'SourceFile' in df.columns:
+        # 同じファイル内であれば、空欄の日付を埋める
+        df['Date'] = df.groupby('SourceFile')['Date'].transform(lambda x: x.ffill().bfill())
+
+    # 6. 数値データの補正（小数の11.0を整数の11として扱う）
     df['PitchLocation'] = pd.to_numeric(df['PitchLocation'], errors='coerce')
-    df['is_Zone'] = df['PitchLocation'].isin(range(1, 10))
+    # 整数型に変換できないNaNを除いて判定
+    df['is_Zone'] = df['PitchLocation'].apply(lambda x: int(x) in range(1, 10) if pd.notnull(x) else False)
     df['PlayOuts'] = pd.to_numeric(df['PlayOuts'], errors='coerce').fillna(0)
     
+    # 7. 文字データのクリーニング
+    str_cols = ['PitchResult', 'HitResult', 'HitType', 'KorBB', 'Memo']
+    for col in str_cols:
+        df[col] = df[col].astype(str).str.strip()
+        df.loc[df[col].isin(['nan', 'None', '', '-', '不明']), col] = None
+
+    # 8. 判定ロジック
     def check_result(val, keywords):
         if not isinstance(val, str): return False
         return any(k in val for k in keywords)
@@ -108,6 +137,7 @@ def clean_and_process(df):
     df['is_Miss'] = df['PitchResult'].apply(lambda x: check_result(str(x), ['空振']))
     df['is_Contact'] = df['PitchResult'].apply(lambda x: check_result(str(x), ['ファール', 'ファウル', 'インプレー']))
 
+    # 9. 打球座標の計算
     def parse_xy(memo):
         rank_to_dist = {1: 10, 2: 65, 3: 110, 4: 155, 5: 195, 6: 240, 7: 290}
         dir_to_angle = {
@@ -122,7 +152,6 @@ def clean_and_process(df):
             d = memo[0]
             rank_str = "".join([c for c in memo[1:] if c.isdigit()])
             if not rank_str: return pd.Series([None, None])
-            
             rank = int(rank_str)
             angle = dir_to_angle.get(d)
             if angle is not None and rank in rank_to_dist:
@@ -135,7 +164,6 @@ def clean_and_process(df):
 
     df[['打球X', '打球Y']] = df['Memo'].apply(parse_xy)
     return df
-
 # --- 共通のグラフ設定群 ---
 def pct(n, d): return (n / d * 100) if d > 0 else 0
 
