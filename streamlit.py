@@ -88,8 +88,7 @@ def clean_and_process(df):
         '打撃結果': 'HitResult',
         '打球タイプ': 'HitType',
         'メモ': 'Memo',
-        '日付': 'Date', 
-        'Ｄａｔｅ': 'Date',
+        '日付': 'Date',
         'date': 'Date',
         'プレーアウト数': 'PlayOuts'
     }
@@ -110,12 +109,6 @@ def clean_and_process(df):
     for col in ['Batter', 'Pitcher']:
         df[col] = df[col].astype(str).str.replace(r'\s+', '', regex=True).replace('nan', None)
     
-    # 5. 日付の補正（1行目だけ入力されている場合のオートフィル）
-    df['Date'] = pd.to_datetime(df['Date'], errors='coerce')
-    if 'SourceFile' in df.columns:
-        # 同じファイル内であれば、空欄の日付を埋める
-        df['Date'] = df.groupby('SourceFile')['Date'].transform(lambda x: x.ffill().bfill())
-
     # 6. 数値データの補正（小数の11.0を整数の11として扱う）
     df['PitchLocation'] = pd.to_numeric(df['PitchLocation'], errors='coerce')
     # 整数型に変換できないNaNを除いて判定
