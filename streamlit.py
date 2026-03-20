@@ -16,7 +16,7 @@ GITHUB_TOKEN = None             # Privateなら必須
 
 # --- アプリ設定 ---
 st.set_page_config(page_title="チームデータ分析", layout="wide")
-st.title("⚾️ チームデータ統合システム (オート補正対応版)")
+st.title("選手分析")
 
 # --- 文字コード自動判定でCSVを安全に読み込む関数 ---
 def read_csv_robust(file_bytes):
@@ -373,7 +373,7 @@ with tab1:
         col1, col2 = st.columns(2)
 
         with col1:
-            st.markdown(f"**コース別 {label_s} / 見逃し率(※)**<br><small>※コース別グラフは、その枠に対する全体見逃し率です</small>", unsafe_allow_html=True)
+            st.markdown(f"**コース別 {label_s} / 見逃し率(※)**<br><small>", unsafe_allow_html=True)
             zone_texts = []
             xs, ys = [], []
             
