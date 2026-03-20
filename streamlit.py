@@ -139,14 +139,20 @@ def clean_and_process(df):
         df['Date'] = df.groupby('SourceFile')['Date'].transform(lambda x: x.ffill().bfill())
 
     # --- 6. 判定フラグの作成 ---
+# --- 6. 判定フラグの作成 ---
     def check_result(val, keywords):
         if not isinstance(val, str): return False
         return any(k in val for k in keywords)
 
-    # 新形式の「ファウル」や「空振り」などの言葉をスイングとして定義
+    # スイング判定：空振り、ファウル、インプレー（打撃結果がある場合も含む）
     df['is_Swing'] = df['PitchResult'].apply(lambda x: check_result(str(x), ['空振', 'ファール', 'ファウル', 'インプレー']))
+    
+    # 空振り判定
     df['is_Miss'] = df['PitchResult'].apply(lambda x: check_result(str(x), ['空振']))
 
+    # 【追加】コンタクト判定：スイングした中で、空振りではないもの
+    # つまり、(ファウル、インプレー、安打、凡打など)
+    df['is_Contact'] = df['is_Swing'] & ~df['is_Miss']
     # --- 7. 打球座標の解析 ---
     def parse_xy(memo):
         rank_to_dist = {1: 10, 2: 65, 3: 110, 4: 155, 5: 195, 6: 240, 7: 290}
