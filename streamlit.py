@@ -268,6 +268,7 @@ with tab1:
         
         total_pitches = len(target_df)
         swings = target_df['is_Swing'].sum()
+        st.write(target_df.columns)
         contact_cnt = target_df['is_Contact'].sum()
         misses = target_df['is_Miss'].sum()
         
