@@ -81,39 +81,36 @@ def clean_and_process(df):
     df.columns = df.columns.astype(str).str.strip().str.replace('　', '')
     df = df.loc[:, ~df.columns.duplicated(keep='first')].copy()
     
+    # 🌟【変更】'OutsOnPlay' 列をマッピングに追加
     column_mapping = {
         'イニング': 'Inning', 'ボール': 'Ball', 'ストライク': 'Strike',
         '投手': 'Pitcher', '打者': 'Batter', '球種': 'PitchType',
         '投球位置': 'PitchLocation', '投球結果': 'PitchResult',
         '三振四球': 'KorBB', '打撃結果': 'HitResult', '打球タイプ': 'HitType',
         'メモ': 'Memo', '日付': 'Date', 'Ｄａｔｅ': 'Date', 'date': 'Date',
-        'プレーアウト数': 'PlayOuts', '打者左右': 'BatterLR'
+        'OutsOnPlay': 'OutsOnPlay', 'プレーアウト数': 'OutsOnPlay', '打者左右': 'BatterLR'
     }
     df = df.rename(columns=column_mapping)
     df = df.loc[:, ~df.columns.duplicated(keep='first')].copy()
 
-    # 🌟【変更】BatterLR を必須列に追加
-    required = ['PitchLocation', 'PitchResult', 'HitResult', 'HitType', 'KorBB', 'Memo', 'Batter', 'Pitcher', 'Date', 'Ball', 'Strike', 'PlayOuts', 'SourceFile', 'BatterLR']
+    # 🌟【変更】必須列に 'OutsOnPlay' を指定
+    required = ['PitchLocation', 'PitchResult', 'HitResult', 'HitType', 'KorBB', 'Memo', 'Batter', 'Pitcher', 'Date', 'Ball', 'Strike', 'OutsOnPlay', 'SourceFile', 'BatterLR']
     for col in required:
         if col not in df.columns: df[col] = None
 
-    # 選手名のスペース・空白を完全に除去
     if 'Batter' in df.columns:
         df['Batter'] = df['Batter'].astype(str).str.replace(r'\s+', '', regex=True)
     if 'Pitcher' in df.columns:
         df['Pitcher'] = df['Pitcher'].astype(str).str.replace(r'\s+', '', regex=True)
     
-    # 日付のオートフィル
     df['Date'] = pd.to_datetime(df['Date'], errors='coerce')
     if 'SourceFile' in df.columns:
         df['Date'] = df.groupby('SourceFile')['Date'].transform(lambda x: x.ffill().bfill())
 
-    # 🌟【追加】BatterLR（打者の左右）の表記揺れを「R」または「L」に統一
     if 'BatterLR' in df.columns:
         df['BatterLR'] = df['BatterLR'].astype(str).str.upper().str.strip()
         df['BatterLR'] = df['BatterLR'].replace({'RIGHT': 'R', 'LEFT': 'L', '右': 'R', '左': 'L'})
 
-    # 文字データの空白やハイフンをクリア
     str_cols = df.select_dtypes(include=['object']).columns
     for col in str_cols:
         if isinstance(df[col], pd.Series):
@@ -122,7 +119,9 @@ def clean_and_process(df):
 
     df['PitchLocation'] = pd.to_numeric(df['PitchLocation'], errors='coerce')
     df['is_Zone'] = df['PitchLocation'].isin(range(1, 10))
-    df['PlayOuts'] = pd.to_numeric(df['PlayOuts'], errors='coerce').fillna(0)
+    
+    # 🌟【変更】OutsOnPlay 列を数値に変換（エラーや空白は0にする）
+    df['OutsOnPlay'] = pd.to_numeric(df['OutsOnPlay'], errors='coerce').fillna(0)
     
     def check_result(val, keywords):
         if not isinstance(val, str): return False
@@ -305,7 +304,10 @@ with tab1:
             st.subheader("打撃成績")
             
         else:
-            outs = target_df['PlayOuts'].sum()
+            # 🌟【変更】イニング計算を 'OutsOnPlay' に基づいて行う
+            outs = target_df['OutsOnPlay'].sum()
+            
+            # (※もし OutsOnPlay がすべて0などでデータが取得できなかった場合の予備ルート)
             if outs == 0 and pa > 0: 
                 outs = so + target_df['HitResult'].isin(['凡打', 'アウト', '併殺打']).sum() + target_df['HitResult'].isin(['犠打', '犠飛']).sum()
                 
@@ -374,7 +376,6 @@ with tab1:
             fig_count.update_layout(title="カウント別 スイング・見逃し傾向", barmode='group', xaxis_title="ボール - ストライク", yaxis_title="割合(%)")
             st.plotly_chart(fig_count, use_container_width=True)
 
-        # 🌟【追加】打者の左右でコース別グラフのデータを絞り込む機能
         st.markdown("---")
         st.subheader("🎯 コース別 アプローチ・打球傾向")
         
@@ -382,7 +383,6 @@ with tab1:
         selected_lr_label = st.radio("📊 表示する打者の左右を選択", list(lr_options.keys()), horizontal=True)
         selected_lr = lr_options[selected_lr_label]
 
-        # 選択された左右に応じてデータをフィルタリング（全体ならそのまま）
         zone_df = target_df.copy()
         if selected_lr != "ALL":
             zone_df = zone_df[zone_df['BatterLR'] == selected_lr]
@@ -398,7 +398,6 @@ with tab1:
                 xs, ys = [], []
                 
                 for z in [1,2,3,4,5,6,7,8,9, 11,12,13,14]:
-                    # 🌟 フィルタリング済みの zone_df を使用
                     z_data = zone_df[zone_df['PitchLocation'] == z]
                     prefix = f"<b>{zone_names[z]}</b><br>" if z in zone_names else ""
                     
@@ -429,7 +428,6 @@ with tab1:
                 h_xs, h_ys = [], []
                 
                 for z in [1,2,3,4,5,6,7,8,9, 11,12,13,14]:
-                    # 🌟 フィルタリング済みの zone_df を使用
                     z_data = zone_df[(zone_df['PitchLocation'] == z) & (zone_df['HitType'].notna())]
                     prefix = f"<b>{zone_names[z]}</b><br>" if z in zone_names else ""
                     
