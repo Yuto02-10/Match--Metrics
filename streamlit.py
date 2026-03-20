@@ -8,8 +8,8 @@ import plotly.graph_objects as go
 import base64
 
 # --- ⚙️ 設定エリア ---
-GITHUB_USER = ""   # ユーザー名
-GITHUB_REPO = ""  # リポジトリ名
+GITHUB_USER = "Yuto02-10"   # ユーザー名
+GITHUB_REPO = "Match--Metrics"  # リポジトリ名
 GITHUB_FOLDER = "試合データ"       # フォルダ名
 GITHUB_IMAGE = "打球分析.png"    # 画像ファイル名
 GITHUB_TOKEN = None             # Privateなら必須
