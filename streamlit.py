@@ -8,9 +8,9 @@ import plotly.graph_objects as go
 import base64
 
 # --- ⚙️ 設定エリア ---
-GITHUB_USER = "Yuto02-10"   # ユーザー名
-GITHUB_REPO = "Match--Metrics"  # リポジトリ名
-GITHUB_FOLDER = "試合データ"      # フォルダ名
+GITHUB_USER = ""   # ユーザー名
+GITHUB_REPO = ""  # リポジトリ名
+GITHUB_FOLDER = "試合データ"       # フォルダ名
 GITHUB_IMAGE = "打球分析.png"    # 画像ファイル名
 GITHUB_TOKEN = None             # Privateなら必須
 
@@ -87,25 +87,31 @@ def clean_and_process(df):
         '投球位置': 'PitchLocation', '投球結果': 'PitchResult',
         '三振四球': 'KorBB', '打撃結果': 'HitResult', '打球タイプ': 'HitType',
         'メモ': 'Memo', '日付': 'Date', 'Ｄａｔｅ': 'Date', 'date': 'Date',
-        'プレーアウト数': 'PlayOuts'
+        'プレーアウト数': 'PlayOuts', '打者左右': 'BatterLR'
     }
     df = df.rename(columns=column_mapping)
     df = df.loc[:, ~df.columns.duplicated(keep='first')].copy()
 
-    required = ['PitchLocation', 'PitchResult', 'HitResult', 'HitType', 'KorBB', 'Memo', 'Batter', 'Pitcher', 'Date', 'Ball', 'Strike', 'PlayOuts', 'SourceFile']
+    # 🌟【変更】BatterLR を必須列に追加
+    required = ['PitchLocation', 'PitchResult', 'HitResult', 'HitType', 'KorBB', 'Memo', 'Batter', 'Pitcher', 'Date', 'Ball', 'Strike', 'PlayOuts', 'SourceFile', 'BatterLR']
     for col in required:
         if col not in df.columns: df[col] = None
 
-    # 🌟【追加1】選手名のスペース・空白を完全に除去して同一人物として扱う
+    # 選手名のスペース・空白を完全に除去
     if 'Batter' in df.columns:
         df['Batter'] = df['Batter'].astype(str).str.replace(r'\s+', '', regex=True)
     if 'Pitcher' in df.columns:
         df['Pitcher'] = df['Pitcher'].astype(str).str.replace(r'\s+', '', regex=True)
     
-    # 🌟【追加2】日付が1行目にしかなくても、ファイル全体に自動でコピー(オートフィル)する
+    # 日付のオートフィル
     df['Date'] = pd.to_datetime(df['Date'], errors='coerce')
     if 'SourceFile' in df.columns:
         df['Date'] = df.groupby('SourceFile')['Date'].transform(lambda x: x.ffill().bfill())
+
+    # 🌟【追加】BatterLR（打者の左右）の表記揺れを「R」または「L」に統一
+    if 'BatterLR' in df.columns:
+        df['BatterLR'] = df['BatterLR'].astype(str).str.upper().str.strip()
+        df['BatterLR'] = df['BatterLR'].replace({'RIGHT': 'R', 'LEFT': 'L', '右': 'R', '左': 'L'})
 
     # 文字データの空白やハイフンをクリア
     str_cols = df.select_dtypes(include=['object']).columns
@@ -214,18 +220,16 @@ if not valid_dates.empty:
     min_date = valid_dates.min().date()
     max_date = valid_dates.max().date()
     
-    # 🌟 一旦、結果を1つの変数で受け取る
     selected_dates = st.sidebar.date_input("📅 分析期間", value=(min_date, max_date), min_value=min_date, max_value=max_date)
     
-    # 🌟 選ばれた日付が2つ（開始と終了）揃っているか確認
     if len(selected_dates) == 2:
         start_date, end_date = selected_dates
     else:
-        # 1つしか選ばれていない（クリック途中）場合は、開始日と終了日を同じ日にする
         start_date = selected_dates[0]
         end_date = selected_dates[0]
         
     df = df[(df['Date'].dt.date >= start_date) & (df['Date'].dt.date <= end_date)]
+else:
     st.sidebar.warning("⚠️ 有効なDate（日付）データが見つかりません。全期間を表示します。")
 
 bg_image, img_err = fetch_github_image(GITHUB_USER, GITHUB_REPO, GITHUB_IMAGE, GITHUB_TOKEN)
@@ -370,71 +374,89 @@ with tab1:
             fig_count.update_layout(title="カウント別 スイング・見逃し傾向", barmode='group', xaxis_title="ボール - ストライク", yaxis_title="割合(%)")
             st.plotly_chart(fig_count, use_container_width=True)
 
-        col1, col2 = st.columns(2)
+        # 🌟【追加】打者の左右でコース別グラフのデータを絞り込む機能
+        st.markdown("---")
+        st.subheader("🎯 コース別 アプローチ・打球傾向")
+        
+        lr_options = {"全体": "ALL", "右打者 (R)": "R", "左打者 (L)": "L"}
+        selected_lr_label = st.radio("📊 表示する打者の左右を選択", list(lr_options.keys()), horizontal=True)
+        selected_lr = lr_options[selected_lr_label]
 
-        with col1:
-            st.markdown(f"**コース別 {label_s} / 見逃し率(※)**<br><small>", unsafe_allow_html=True)
-            zone_texts = []
-            xs, ys = [], []
+        # 選択された左右に応じてデータをフィルタリング（全体ならそのまま）
+        zone_df = target_df.copy()
+        if selected_lr != "ALL":
+            zone_df = zone_df[zone_df['BatterLR'] == selected_lr]
+
+        if zone_df.empty:
+            st.info("選択した条件（打者の左右）のデータがありません。")
+        else:
+            col1, col2 = st.columns(2)
             
-            for z in [1,2,3,4,5,6,7,8,9, 11,12,13,14]:
-                z_data = target_df[target_df['PitchLocation'] == z]
-                prefix = f"<b>{zone_names[z]}</b><br>" if z in zone_names else ""
+            with col1:
+                st.markdown(f"**コース別 {label_s} / 見逃し率(※)**<br><small>※選択中のデータ数: {len(zone_df)}球</small>", unsafe_allow_html=True)
+                zone_texts = []
+                xs, ys = [], []
                 
-                if not z_data.empty:
-                    s_rate = pct(z_data['is_Swing'].sum(), len(z_data))
-                    t_rate = pct(len(z_data) - z_data['is_Swing'].sum(), len(z_data))
-                    txt = f"{prefix}振:{s_rate:.0f}%<br>見:{t_rate:.0f}%"
-                else:
-                    txt = f"{prefix}-"
+                for z in [1,2,3,4,5,6,7,8,9, 11,12,13,14]:
+                    # 🌟 フィルタリング済みの zone_df を使用
+                    z_data = zone_df[zone_df['PitchLocation'] == z]
+                    prefix = f"<b>{zone_names[z]}</b><br>" if z in zone_names else ""
+                    
+                    if not z_data.empty:
+                        s_rate = pct(z_data['is_Swing'].sum(), len(z_data))
+                        t_rate = pct(len(z_data) - z_data['is_Swing'].sum(), len(z_data))
+                        txt = f"{prefix}振:{s_rate:.0f}%<br>見:{t_rate:.0f}%"
+                    else:
+                        txt = f"{prefix}-"
+                    
+                    x, y = zone_map[z]
+                    xs.append(x)
+                    ys.append(y)
+                    zone_texts.append(txt)
+    
+                fig_zone1 = go.Figure(go.Scatter(x=xs, y=ys, mode="text", text=zone_texts, textfont=dict(size=12, color="black")))
+                fig_zone1.update_layout(
+                    xaxis=dict(range=[-1, 5], showticklabels=False, showgrid=False, zeroline=False),
+                    yaxis=dict(range=[-1, 5], showticklabels=False, showgrid=False, zeroline=False),
+                    width=350, height=350, margin=dict(l=10, r=10, t=10, b=10), plot_bgcolor="whitesmoke",
+                    shapes=board_shapes
+                )
+                st.plotly_chart(fig_zone1, use_container_width=True)
+    
+            with col2:
+                st.markdown("**コース別 ゴロ / フライ / ライナー 発生率**")
+                hit_texts = []
+                h_xs, h_ys = [], []
                 
-                x, y = zone_map[z]
-                xs.append(x)
-                ys.append(y)
-                zone_texts.append(txt)
-
-            fig_zone1 = go.Figure(go.Scatter(x=xs, y=ys, mode="text", text=zone_texts, textfont=dict(size=12, color="black")))
-            fig_zone1.update_layout(
-                xaxis=dict(range=[-1, 5], showticklabels=False, showgrid=False, zeroline=False),
-                yaxis=dict(range=[-1, 5], showticklabels=False, showgrid=False, zeroline=False),
-                width=350, height=350, margin=dict(l=10, r=10, t=10, b=10), plot_bgcolor="whitesmoke",
-                shapes=board_shapes
-            )
-            st.plotly_chart(fig_zone1, use_container_width=True)
-
-        with col2:
-            st.markdown("**コース別 ゴロ / フライ / ライナー 発生率**")
-            hit_texts = []
-            h_xs, h_ys = [], []
-            
-            for z in [1,2,3,4,5,6,7,8,9, 11,12,13,14]:
-                z_data = target_df[(target_df['PitchLocation'] == z) & (target_df['HitType'].notna())]
-                prefix = f"<b>{zone_names[z]}</b><br>" if z in zone_names else ""
-                
-                if not z_data.empty:
-                    _goro = pct((z_data['HitType'] == 'ゴロ').sum(), len(z_data))
-                    _fly = pct((z_data['HitType'] == 'フライ').sum(), len(z_data))
-                    _liner = pct((z_data['HitType'] == 'ライナー').sum(), len(z_data))
-                    txt = f"{prefix}ゴ:{_goro:.0f}%<br>フ:{_fly:.0f}%<br>ラ:{_liner:.0f}%"
-                else:
-                    txt = f"{prefix}-"
-                
-                x, y = zone_map[z]
-                h_xs.append(x)
-                h_ys.append(y)
-                hit_texts.append(txt)
-
-            fig_zone2 = go.Figure(go.Scatter(x=h_xs, y=h_ys, mode="text", text=hit_texts, textfont=dict(size=11, color="black")))
-            fig_zone2.update_layout(
-                xaxis=dict(range=[-1, 5], showticklabels=False, showgrid=False, zeroline=False),
-                yaxis=dict(range=[-1, 5], showticklabels=False, showgrid=False, zeroline=False),
-                width=350, height=350, margin=dict(l=10, r=10, t=10, b=10), plot_bgcolor="whitesmoke",
-                shapes=board_shapes
-            )
-            st.plotly_chart(fig_zone2, use_container_width=True)
+                for z in [1,2,3,4,5,6,7,8,9, 11,12,13,14]:
+                    # 🌟 フィルタリング済みの zone_df を使用
+                    z_data = zone_df[(zone_df['PitchLocation'] == z) & (zone_df['HitType'].notna())]
+                    prefix = f"<b>{zone_names[z]}</b><br>" if z in zone_names else ""
+                    
+                    if not z_data.empty:
+                        _goro = pct((z_data['HitType'] == 'ゴロ').sum(), len(z_data))
+                        _fly = pct((z_data['HitType'] == 'フライ').sum(), len(z_data))
+                        _liner = pct((z_data['HitType'] == 'ライナー').sum(), len(z_data))
+                        txt = f"{prefix}ゴ:{_goro:.0f}%<br>フ:{_fly:.0f}%<br>ラ:{_liner:.0f}%"
+                    else:
+                        txt = f"{prefix}-"
+                    
+                    x, y = zone_map[z]
+                    h_xs.append(x)
+                    h_ys.append(y)
+                    hit_texts.append(txt)
+    
+                fig_zone2 = go.Figure(go.Scatter(x=h_xs, y=h_ys, mode="text", text=hit_texts, textfont=dict(size=11, color="black")))
+                fig_zone2.update_layout(
+                    xaxis=dict(range=[-1, 5], showticklabels=False, showgrid=False, zeroline=False),
+                    yaxis=dict(range=[-1, 5], showticklabels=False, showgrid=False, zeroline=False),
+                    width=350, height=350, margin=dict(l=10, r=10, t=10, b=10), plot_bgcolor="whitesmoke",
+                    shapes=board_shapes
+                )
+                st.plotly_chart(fig_zone2, use_container_width=True)
 
         with st.expander("データログ"):
-            cols = ['Date', 'Inning', 'Batter', 'Pitcher', 'PitchResult', 'HitResult', 'HitType', 'Memo']
+            cols = ['Date', 'Inning', 'Batter', 'BatterLR', 'Pitcher', 'PitchResult', 'HitResult', 'HitType', 'Memo']
             st.dataframe(target_df[[c for c in cols if c in df.columns]].fillna('').sort_values('Date'))
 
 with tab2:
