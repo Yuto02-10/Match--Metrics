@@ -81,42 +81,51 @@ def clean_and_process(df):
     # --- 1. 列名の徹底洗浄 (BOM・空白・改行・全角の完全排除) ---
     df.columns = (
         df.columns.astype(str)
-        .str.replace(u'\ufeff', '') 
-        .str.strip()                
-        .str.replace('　', '')      
-        .str.replace('\n', '')      
+        .str.replace(u'\ufeff', '') # BOMを削除
+        .str.strip()                # 前後の空白削除
+        .str.replace('　', '')      # 全角空白削除
+        .str.replace('\n', '')      # 改行コード削除
     )
     
-    # ここで一度、名前が完全に一致してしまった重複列を削除
+    # 名前の重複を一度クリア
     df = df.loc[:, ~df.columns.duplicated(keep='first')].copy()
     
     # --- 2. 新旧フォーマットの紐付け ---
     column_mapping = {
-        'イニング': 'Inning', 'ボール': 'Ball', 'ストライク': 'Strike',
-        '投手': 'Pitcher', '打者': 'Batter', '球種': 'PitchType',
-        '投球位置': 'PitchLocation', '投球結果': 'PitchResult',
-        '三振四球': 'KorBB', '打撃結果': 'HitResult', '打球タイプ': 'HitType',
-        'メモ': 'Memo', '日付': 'Date', 'プレーアウト数': 'PlayOuts'
+        'イニング': 'Inning',
+        'ボール': 'Ball',
+        'ストライク': 'Strike',
+        '投手': 'Pitcher',
+        '打者': 'Batter',
+        '球種': 'PitchType',
+        '投球位置': 'PitchLocation',
+        '投球結果': 'PitchResult',
+        '三振四球': 'KorBB',
+        '打撃結果': 'HitResult',
+        '打球タイプ': 'HitType',
+        'メモ': 'Memo',
+        '日付': 'Date', 'Ｄａｔｅ': 'Date', 'date': 'Date',
+        'プレーアウト数': 'PlayOuts'
     }
     df = df.rename(columns=column_mapping)
     
-    # リネームの結果、重複が発生した場合（例:元々Dateと日付が両方あった）に備えて再度削除
+    # リネーム後に同じ名前（例:Batter）が重複しても、1つに絞る
     df = df.loc[:, ~df.columns.duplicated(keep='first')].copy()
 
-    # 必須列を準備（存在しない列をNoneで作成）
+    # 必須列を準備（値がない場合はNoneで埋める）
     required = ['PitchLocation', 'PitchResult', 'HitResult', 'HitType', 'KorBB', 'Memo', 'Batter', 'Pitcher', 'Date', 'Ball', 'Strike', 'PlayOuts', 'SourceFile']
     for col in required:
         if col not in df.columns:
             df[col] = None
 
-    # --- 3. 選手名のスペース補正 (ここが AttributeError の箇所) ---
+    # --- 3. 選手名のスペース補正 (AttributeError 対策) ---
     for col in ['Batter', 'Pitcher']:
-        # 万が一 df[col] が DataFrame になっている場合に備え、1列目だけを強制的に取得 (.iloc[:, 0])
-        target_col = df[col]
-        if isinstance(target_col, pd.DataFrame):
-            target_col = target_col.iloc[:, 0]
+        # ★重要: 列が重複してDataFrameになっていても、強制的に最初の1列目だけを取得する
+        target_data = df[col]
+        if isinstance(target_data, pd.DataFrame):
+            target_data = target_data.iloc[:, 0]
             
-        df[col] = target_col.astype(str).str.replace(r'\s+', '', regex=True).replace('nan', '不明')
+        df[col] = target_data.astype(str).str.replace(r'\s+', '', regex=True).replace('nan', '不明')
     
     # --- 4. 数値データの安定化 ---
     df['PitchLocation'] = pd.to_numeric(df['PitchLocation'], errors='coerce')
@@ -130,7 +139,7 @@ def clean_and_process(df):
     if 'SourceFile' in df.columns:
         df['Date'] = df.groupby('SourceFile')['Date'].transform(lambda x: x.ffill().bfill())
 
-    # --- 6. 判定フラグの作成 (is_Contact をここに追加) ---
+    # --- 6. 判定フラグの作成 (KeyError: 'is_Contact' 対策) ---
     def check_result(val, keywords):
         if not isinstance(val, str): return False
         return any(k in val for k in keywords)
@@ -138,7 +147,7 @@ def clean_and_process(df):
     df['is_Swing'] = df['PitchResult'].apply(lambda x: check_result(str(x), ['空振', 'ファール', 'ファウル', 'インプレー']))
     df['is_Miss'] = df['PitchResult'].apply(lambda x: check_result(str(x), ['空振']))
     
-    # 【重要】前回の KeyError を解決する行：コンタクト判定
+    # コンタクト判定（振った かつ 空振りではない = 当たった）
     df['is_Contact'] = df['is_Swing'] & ~df['is_Miss']
 
     # --- 7. 打球座標の解析 ---
