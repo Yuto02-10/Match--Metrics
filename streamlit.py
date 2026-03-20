@@ -213,9 +213,19 @@ valid_dates = df['Date'].dropna()
 if not valid_dates.empty:
     min_date = valid_dates.min().date()
     max_date = valid_dates.max().date()
-    start_date, end_date = st.sidebar.date_input("📅 分析期間", value=(min_date, max_date), min_value=min_date, max_value=max_date)
+    
+    # 🌟 一旦、結果を1つの変数で受け取る
+    selected_dates = st.sidebar.date_input("📅 分析期間", value=(min_date, max_date), min_value=min_date, max_value=max_date)
+    
+    # 🌟 選ばれた日付が2つ（開始と終了）揃っているか確認
+    if len(selected_dates) == 2:
+        start_date, end_date = selected_dates
+    else:
+        # 1つしか選ばれていない（クリック途中）場合は、開始日と終了日を同じ日にする
+        start_date = selected_dates[0]
+        end_date = selected_dates[0]
+        
     df = df[(df['Date'].dt.date >= start_date) & (df['Date'].dt.date <= end_date)]
-else:
     st.sidebar.warning("⚠️ 有効なDate（日付）データが見つかりません。全期間を表示します。")
 
 bg_image, img_err = fetch_github_image(GITHUB_USER, GITHUB_REPO, GITHUB_IMAGE, GITHUB_TOKEN)
