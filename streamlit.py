@@ -78,16 +78,9 @@ def fetch_github_image(user, repo, filename, token=None):
 def clean_and_process(df):
     if df.empty: return df
     
-    # --- 1. 列名の徹底洗浄 (BOM・空白・改行の排除) ---
-    df.columns = [
-        str(c).replace(u'\ufeff', '').strip().replace('　', '').replace('\n', '') 
-        for c in df.columns
-    ]
-    
-    # --- 2. 名寄せ (翻訳前に名前が被っている列があれば1つに絞る) ---
+    df.columns = df.columns.astype(str).str.strip().str.replace('　', '')
     df = df.loc[:, ~df.columns.duplicated(keep='first')].copy()
     
-    # --- 3. 新旧フォーマットの紐付け (日本語 -> 英語) ---
     column_mapping = {
         'イニング': 'Inning', 'ボール': 'Ball', 'ストライク': 'Strike',
         '投手': 'Pitcher', '打者': 'Batter', '球種': 'PitchType',
@@ -97,71 +90,70 @@ def clean_and_process(df):
         'プレーアウト数': 'PlayOuts'
     }
     df = df.rename(columns=column_mapping)
-    
-    # --- 4. 重要：翻訳後に名前が被った場合（例:元々Batter列があった等）に再度1つに絞る ---
     df = df.loc[:, ~df.columns.duplicated(keep='first')].copy()
 
-    # 必須列を準備
     required = ['PitchLocation', 'PitchResult', 'HitResult', 'HitType', 'KorBB', 'Memo', 'Batter', 'Pitcher', 'Date', 'Ball', 'Strike', 'PlayOuts', 'SourceFile']
     for col in required:
-        if col not in df.columns:
-            df[col] = None
+        if col not in df.columns: df[col] = None
 
-    # --- 5. 選手名のスペース補正 (エラーの箇所を極めて安全に処理) ---
-    for col in ['Batter', 'Pitcher']:
-        # Seriesとして確実に取得（もしDataFrameになっていたら1列目だけ取る）
-        s = df[col]
-        if hasattr(s, 'iloc') and len(s.shape) > 1:
-            s = s.iloc[:, 0]
-        
-        # 加工後のデータを1列として再代入
-        processed_series = s.astype(str).str.replace(r'\s+', '', regex=True).replace('nan', '不明')
-        
-        # 重複列を完全に消してから、新しい1列を追加する（最も安全な方法）
-        df = df.drop(columns=[col])
-        df[col] = processed_series
+    # 🌟【追加1】選手名のスペース・空白を完全に除去して同一人物として扱う
+    if 'Batter' in df.columns:
+        df['Batter'] = df['Batter'].astype(str).str.replace(r'\s+', '', regex=True)
+    if 'Pitcher' in df.columns:
+        df['Pitcher'] = df['Pitcher'].astype(str).str.replace(r'\s+', '', regex=True)
     
-    # --- 6. 数値・日付データの整形 ---
-    df['PitchLocation'] = pd.to_numeric(df['PitchLocation'], errors='coerce')
-    df['PlayOuts'] = pd.to_numeric(df['PlayOuts'], errors='coerce').fillna(0)
+    # 🌟【追加2】日付が1行目にしかなくても、ファイル全体に自動でコピー(オートフィル)する
     df['Date'] = pd.to_datetime(df['Date'], errors='coerce')
-    
-    # ゾーン判定
-    df['is_Zone'] = df['PitchLocation'].apply(lambda x: int(x) in range(1, 10) if pd.notnull(x) else False)
-
-    # 日付の補完
     if 'SourceFile' in df.columns:
         df['Date'] = df.groupby('SourceFile')['Date'].transform(lambda x: x.ffill().bfill())
 
-    # --- 7. 判定フラグの作成 (KeyError: 'is_Contact' もこれで解決) ---
+    # 文字データの空白やハイフンをクリア
+    str_cols = df.select_dtypes(include=['object']).columns
+    for col in str_cols:
+        if isinstance(df[col], pd.Series):
+            df[col] = df[col].astype(str).str.strip()
+            df.loc[df[col].isin(['nan', 'None', '', '-', '不明']), col] = None
+
+    df['PitchLocation'] = pd.to_numeric(df['PitchLocation'], errors='coerce')
+    df['is_Zone'] = df['PitchLocation'].isin(range(1, 10))
+    df['PlayOuts'] = pd.to_numeric(df['PlayOuts'], errors='coerce').fillna(0)
+    
     def check_result(val, keywords):
         if not isinstance(val, str): return False
         return any(k in val for k in keywords)
 
     df['is_Swing'] = df['PitchResult'].apply(lambda x: check_result(str(x), ['空振', 'ファール', 'ファウル', 'インプレー']))
     df['is_Miss'] = df['PitchResult'].apply(lambda x: check_result(str(x), ['空振']))
-    df['is_Contact'] = df['is_Swing'] & ~df['is_Miss']
+    df['is_Contact'] = df['PitchResult'].apply(lambda x: check_result(str(x), ['ファール', 'ファウル', 'インプレー']))
 
-    # --- 8. 打球座標の解析 ---
     def parse_xy(memo):
         rank_to_dist = {1: 10, 2: 65, 3: 110, 4: 155, 5: 195, 6: 240, 7: 290}
-        dir_to_angle = {'B': -46.5, 'C': -42.2, 'D': -38, 'E': -34.2, 'F': -30, 'G': -26, 'H': -22.15,'I': -18, 'J': -14, 'K': -10, 'L': -6, 'M': -2.5, 'N': 1.5, 'O': 5.5, 'P': 9.5, 'Q': 13.5, 'R': 17.5, 'S': 21.5, 'T': 25.5, 'U': 29.5, 'V': 33.5, 'W': 37.5, 'X': 41.5, 'Y': 45.5}
+        dir_to_angle = {
+            'B': -46.5, 'C': -42.2, 'D': -38, 'E': -34.2, 'F': -30, 'G': -26,
+            'H': -22.15,'I': -18, 'J': -14, 'K': -10, 'L': -6, 'M': -2.5,
+            'N': 1.5, 'O': 5.5, 'P': 9.5, 'Q': 13.5, 'R': 17.5, 'S': 21.5,
+            'T': 25.5, 'U': 29.5, 'V': 33.5, 'W': 37.5, 'X': 41.5, 'Y': 45.5
+        }
         if not isinstance(memo, str) or len(memo) < 2: return pd.Series([None, None])
         try:
             memo = memo.replace(" ", "").upper()
-            d, r_s = memo[0], "".join([c for c in memo[1:] if c.isdigit()])
-            if not r_s: return pd.Series([None, None])
-            dist = rank_to_dist.get(int(r_s), 0)
+            d = memo[0]
+            rank_str = "".join([c for c in memo[1:] if c.isdigit()])
+            if not rank_str: return pd.Series([None, None])
+            
+            rank = int(rank_str)
             angle = dir_to_angle.get(d)
-            if angle is not None and dist > 0:
+            if angle is not None and rank in rank_to_dist:
+                angle += random.uniform(-0.05, 0.05)
+                dist = rank_to_dist[rank] * random.uniform(0.9, 1.1)
                 rad = math.radians(angle)
                 return pd.Series([round(dist*1.2*math.sin(rad),2), round(dist*0.8*math.cos(rad),2)])
         except: pass
         return pd.Series([None, None])
 
     df[['打球X', '打球Y']] = df['Memo'].apply(parse_xy)
-    
     return df
+
 # --- 共通のグラフ設定群 ---
 def pct(n, d): return (n / d * 100) if d > 0 else 0
 
@@ -263,7 +255,6 @@ with tab1:
         
         total_pitches = len(target_df)
         swings = target_df['is_Swing'].sum()
-        st.write(target_df.columns)
         contact_cnt = target_df['is_Contact'].sum()
         misses = target_df['is_Miss'].sum()
         
