@@ -480,36 +480,7 @@ with tab1:
                 )
                 st.plotly_chart(fig_zone2, use_container_width=True)
     
-            with col2:
-                st.markdown("**コース別 ゴロ / フライ / ライナー 発生率**")
-                hit_texts = []
-                h_xs, h_ys = [], []
-                
-                for z in [1,2,3,4,5,6,7,8,9, 11,12,13,14]:
-                    z_data = zone_df[(zone_df['PitchLocation'] == z) & (zone_df['HitType'].notna())]
-                    prefix = f"<b>{zone_names[z]}</b><br>" if z in zone_names else ""
-                    
-                    if not z_data.empty:
-                        _goro = pct((z_data['HitType'] == 'ゴロ').sum(), len(z_data))
-                        _fly = pct((z_data['HitType'] == 'フライ').sum(), len(z_data))
-                        _liner = pct((z_data['HitType'] == 'ライナー').sum(), len(z_data))
-                        txt = f"{prefix}ゴ:{_goro:.0f}%<br>フ:{_fly:.0f}%<br>ラ:{_liner:.0f}%"
-                    else:
-                        txt = f"{prefix}-"
-                    
-                    x, y = zone_map[z]
-                    h_xs.append(x)
-                    h_ys.append(y)
-                    hit_texts.append(txt)
-    
-                fig_zone2 = go.Figure(go.Scatter(x=h_xs, y=h_ys, mode="text", text=hit_texts, textfont=dict(size=11, color="black")))
-                fig_zone2.update_layout(
-                    xaxis=dict(range=[-1, 5], showticklabels=False, showgrid=False, zeroline=False),
-                    yaxis=dict(range=[-1, 5], showticklabels=False, showgrid=False, zeroline=False),
-                    width=350, height=350, margin=dict(l=10, r=10, t=10, b=10), plot_bgcolor="whitesmoke",
-                    shapes=board_shapes
-                )
-                st.plotly_chart(fig_zone2, use_container_width=True)
+
 
         with st.expander("データログ"):
             cols = ['Date', 'Inning', 'Batter', 'BatterLR', 'Pitcher', 'PitchResult', 'HitResult', 'HitType', 'Memo']
