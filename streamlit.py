@@ -379,9 +379,6 @@ with tab1:
         st.markdown("---")
         st.subheader("🎯 コース別 アプローチ・打球傾向")
         
- st.markdown("---")
-        st.subheader("🎯 コース別 アプローチ・打球傾向")
-        
         # --- 1. カウント列の事前作成 ---
         # 1.0-2.0 のような小数点表記を防ぐために文字列処理を挟んで結合します
         target_df['Count'] = target_df['Ball'].astype(str).str.replace('.0', '', regex=False) + "-" + target_df['Strike'].astype(str).str.replace('.0', '', regex=False)
