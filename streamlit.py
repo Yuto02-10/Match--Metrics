@@ -379,16 +379,46 @@ with tab1:
         st.markdown("---")
         st.subheader("🎯 コース別 アプローチ・打球傾向")
         
-        lr_options = {"全体": "ALL", "右打者 (R)": "R", "左打者 (L)": "L"}
-        selected_lr_label = st.radio("📊 表示する打者の左右を選択", list(lr_options.keys()), horizontal=True)
-        selected_lr = lr_options[selected_lr_label]
+ st.markdown("---")
+        st.subheader("🎯 コース別 アプローチ・打球傾向")
+        
+        # --- 1. カウント列の事前作成 ---
+        # 1.0-2.0 のような小数点表記を防ぐために文字列処理を挟んで結合します
+        target_df['Count'] = target_df['Ball'].astype(str).str.replace('.0', '', regex=False) + "-" + target_df['Strike'].astype(str).str.replace('.0', '', regex=False)
 
+        # --- 2. フィルターUIの配置 (横に3つ並べる) ---
+        col_f1, col_f2, col_f3 = st.columns(3)
+        
+        with col_f1:
+            lr_options = {"全体": "ALL", "右打者 (R)": "R", "左打者 (L)": "L"}
+            selected_lr_label = st.radio("📊 打者の左右", list(lr_options.keys()), horizontal=True)
+            selected_lr = lr_options[selected_lr_label]
+
+        with col_f2:
+            # 存在するカウントの一覧を取得 ('nan-nan'等の無効データは除外)
+            available_counts = sorted([c for c in target_df['Count'].dropna().unique() if 'nan' not in c.lower() and 'none' not in c.lower()])
+            selected_counts = st.multiselect("⚾ カウントを選択 (複数可)", available_counts, default=[])
+
+        with col_f3:
+            # 存在する球種の一覧を取得
+            available_pitch_types = sorted(list(target_df['PitchType'].dropna().unique()))
+            selected_pitch_types = st.multiselect("⚾ 球種を選択 (複数可)", available_pitch_types, default=[])
+
+        # --- 3. データの絞り込み ---
         zone_df = target_df.copy()
+        
         if selected_lr != "ALL":
             zone_df = zone_df[zone_df['BatterLR'] == selected_lr]
+            
+        if len(selected_counts) > 0:
+            zone_df = zone_df[zone_df['Count'].isin(selected_counts)]
+            
+        if len(selected_pitch_types) > 0:
+            zone_df = zone_df[zone_df['PitchType'].isin(selected_pitch_types)]
 
+        # --- 4. グラフの描画 ---
         if zone_df.empty:
-            st.info("選択した条件（打者の左右）のデータがありません。")
+            st.info("選択した条件に一致するデータがありません。条件を変更してください。")
         else:
             col1, col2 = st.columns(2)
             
@@ -421,6 +451,37 @@ with tab1:
                     shapes=board_shapes
                 )
                 st.plotly_chart(fig_zone1, use_container_width=True)
+    
+            with col2:
+                st.markdown("**コース別 ゴロ / フライ / ライナー 発生率**")
+                hit_texts = []
+                h_xs, h_ys = [], []
+                
+                for z in [1,2,3,4,5,6,7,8,9, 11,12,13,14]:
+                    z_data = zone_df[(zone_df['PitchLocation'] == z) & (zone_df['HitType'].notna())]
+                    prefix = f"<b>{zone_names[z]}</b><br>" if z in zone_names else ""
+                    
+                    if not z_data.empty:
+                        _goro = pct((z_data['HitType'] == 'ゴロ').sum(), len(z_data))
+                        _fly = pct((z_data['HitType'] == 'フライ').sum(), len(z_data))
+                        _liner = pct((z_data['HitType'] == 'ライナー').sum(), len(z_data))
+                        txt = f"{prefix}ゴ:{_goro:.0f}%<br>フ:{_fly:.0f}%<br>ラ:{_liner:.0f}%"
+                    else:
+                        txt = f"{prefix}-"
+                    
+                    x, y = zone_map[z]
+                    h_xs.append(x)
+                    h_ys.append(y)
+                    hit_texts.append(txt)
+    
+                fig_zone2 = go.Figure(go.Scatter(x=h_xs, y=h_ys, mode="text", text=hit_texts, textfont=dict(size=11, color="black")))
+                fig_zone2.update_layout(
+                    xaxis=dict(range=[-1, 5], showticklabels=False, showgrid=False, zeroline=False),
+                    yaxis=dict(range=[-1, 5], showticklabels=False, showgrid=False, zeroline=False),
+                    width=350, height=350, margin=dict(l=10, r=10, t=10, b=10), plot_bgcolor="whitesmoke",
+                    shapes=board_shapes
+                )
+                st.plotly_chart(fig_zone2, use_container_width=True)
     
             with col2:
                 st.markdown("**コース別 ゴロ / フライ / ライナー 発生率**")
