@@ -213,25 +213,44 @@ with st.expander("🛠 データの読み込み状況（確認用）", expanded=
     st.write("▼ データの先頭3行")
     st.dataframe(df.head(3))
 
-# --- 📅 期間選択機能 ---
 valid_dates = df['Date'].dropna()
 if not valid_dates.empty:
     min_date = valid_dates.min().date()
     max_date = valid_dates.max().date()
     
-    selected_dates = st.sidebar.date_input("📅 分析期間", value=(min_date, max_date), min_value=min_date, max_value=max_date)
+    st.sidebar.markdown("**📅 分析期間**")
     
-    if len(selected_dates) == 2:
-        start_date, end_date = selected_dates
+    # 2つのカラムに分けて開始日と終了日を配置
+    col1, col2 = st.sidebar.columns(2)
+    
+    # format引数を指定すると、キーボード入力時のフォーマットが固定されて入力しやすくなります
+    start_date = col1.date_input(
+        "開始日", 
+        value=min_date, 
+        min_value=min_date, 
+        max_value=max_date,
+        format="YYYY/MM/DD"
+    )
+    
+    end_date = col2.date_input(
+        "終了日", 
+        value=max_date, 
+        min_value=min_date, 
+        max_value=max_date,
+        format="YYYY/MM/DD"
+    )
+    
+    # エラーハンドリング: 開始日が終了日より後になってしまった場合
+    if start_date > end_date:
+        st.sidebar.error("⚠️ 開始日は終了日以前の日付を選択してください。")
     else:
-        start_date = selected_dates[0]
-        end_date = selected_dates[0]
-        
-    df = df[(df['Date'].dt.date >= start_date) & (df['Date'].dt.date <= end_date)]
+        # データフレームのフィルタリング
+        df = df[(df['Date'].dt.date >= start_date) & (df['Date'].dt.date <= end_date)]
 else:
     st.sidebar.warning("⚠️ 有効なDate（日付）データが見つかりません。全期間を表示します。")
 
-bg_image, img_err = fetch_github_image(GITHUB_USER, GITHUB_REPO, GITHUB_IMAGE, GITHUB_TOKEN)
+# (画像取得のコード等はそのまま)
+# bg_image, img_err = fetch_github_image(GITHUB_USER, GITHUB_REPO, GITHUB_IMAGE, GITHUB_TOKEN)
 
 st.sidebar.markdown("---")
 analysis_mode = st.sidebar.radio("🔍 分析モード", ["👤 打者分析", "⚾ 投手分析"])
